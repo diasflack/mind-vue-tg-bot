@@ -45,7 +45,17 @@ def get_user_data_file(chat_id: int) -> str:
 
 
 def save_data(data: Dict[str, Any], chat_id: int) -> bool:
-    """Сохраняет зашифрованные данные в файл пользователя."""
+    """
+    Сохраняет зашифрованные данные в файл пользователя.
+    Если запись с такой датой уже существует, она будет перезаписана.
+
+    Args:
+        data: данные для сохранения
+        chat_id: ID пользователя в Telegram
+
+    Returns:
+        bool: True, если данные успешно сохранены
+    """
     user_file = get_user_data_file(chat_id)
     logger.info(f"Сохранение данных для пользователя {chat_id} в файл {user_file}")
 
@@ -61,9 +71,17 @@ def save_data(data: Dict[str, Any], chat_id: int) -> bool:
         }
 
         if os.path.exists(user_file):
-            logger.debug(f"Файл {user_file} существует, добавляем новую запись")
-            # Добавление новой записи в существующий файл
+            logger.debug(f"Файл {user_file} существует, проверяем наличие записи на эту дату")
+            # Чтение существующего файла
             df = pd.read_csv(user_file)
+
+            # Проверка на наличие записи с такой же датой
+            if data['date'] in df['date'].values:
+                logger.info(f"Найдена существующая запись на дату {data['date']}, она будет перезаписана")
+                # Удаление старой записи
+                df = df[df['date'] != data['date']]
+
+            # Добавление новой записи
             df = pd.concat([df, pd.DataFrame([row_data])], ignore_index=True)
             df.to_csv(user_file, index=False)
             logger.debug(f"Всего записей в файле после добавления: {len(df)}")
@@ -91,35 +109,35 @@ def save_data(data: Dict[str, Any], chat_id: int) -> bool:
 def get_user_entries(chat_id: int, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Получает расшифрованные записи пользователя с фильтрацией по датам.
-    
+
     Args:
         chat_id: ID пользователя в Telegram
         start_date: начальная дата фильтрации (опционально)
         end_date: конечная дата фильтрации (опционально)
-        
+
     Returns:
         List[Dict[str, Any]]: список расшифрованных записей
     """
     user_file = get_user_data_file(chat_id)
-    
+
     if not os.path.exists(user_file):
         logger.info(f"Файл данных для пользователя {chat_id} не найден")
         return []
-    
+
     try:
         df = pd.read_csv(user_file)
-        
+
         if len(df) == 0:
             logger.info(f"У пользователя {chat_id} нет записей")
             return []
-        
+
         # Фильтрация по датам, если указаны
         if start_date and 'date' in df.columns:
             df = df[df['date'] >= start_date]
-        
+
         if end_date and 'date' in df.columns:
             df = df[df['date'] <= end_date]
-        
+
         # Расшифровка всех записей
         decrypted_entries = []
         for _, row in df.iterrows():
@@ -128,7 +146,7 @@ def get_user_entries(chat_id: int, start_date: Optional[str] = None, end_date: O
                 decrypted_entries.append(entry)
             else:
                 logger.warning(f"Не удалось расшифровать запись для пользователя {chat_id}")
-        
+
         logger.info(f"Успешно получено {len(decrypted_entries)} записей для пользователя {chat_id}")
         return decrypted_entries
     except Exception as e:
@@ -136,29 +154,93 @@ def get_user_entries(chat_id: int, start_date: Optional[str] = None, end_date: O
         return []
 
 
+def delete_all_entries(chat_id: int) -> bool:
+    """
+    Удаляет все записи пользователя.
+
+    Args:
+        chat_id: ID пользователя в Telegram
+
+    Returns:
+        bool: True, если данные успешно удалены
+    """
+    user_file = get_user_data_file(chat_id)
+
+    if not os.path.exists(user_file):
+        logger.info(f"Файл данных для пользователя {chat_id} не найден")
+        return False
+
+    try:
+        # Создаем пустой DataFrame с теми же колонками
+        df = pd.read_csv(user_file)
+        empty_df = pd.DataFrame(columns=df.columns)
+        empty_df.to_csv(user_file, index=False)
+
+        logger.info(f"Все записи для пользователя {chat_id} успешно удалены")
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка при удалении данных для пользователя {chat_id}: {e}")
+        return False
+
+
+def delete_entry_by_date(chat_id: int, date: str) -> bool:
+    """
+    Удаляет запись пользователя за указанную дату.
+
+    Args:
+        chat_id: ID пользователя в Telegram
+        date: дата в формате YYYY-MM-DD
+
+    Returns:
+        bool: True, если запись успешно удалена
+    """
+    user_file = get_user_data_file(chat_id)
+
+    if not os.path.exists(user_file):
+        logger.info(f"Файл данных для пользователя {chat_id} не найден")
+        return False
+
+    try:
+        df = pd.read_csv(user_file)
+
+        if date not in df['date'].values:
+            logger.info(f"Запись на дату {date} для пользователя {chat_id} не найдена")
+            return False
+
+        # Удаляем запись с указанной датой
+        df = df[df['date'] != date]
+        df.to_csv(user_file, index=False)
+
+        logger.info(f"Запись на дату {date} для пользователя {chat_id} успешно удалена")
+        return True
+    except Exception as e:
+        logger.error(f"Ошибка при удалении записи на дату {date} для пользователя {chat_id}: {e}")
+        return False
+
+
 def save_user(chat_id: int, username: Optional[str], first_name: Optional[str], notification_time: Optional[str] = None) -> bool:
     """
     Сохраняет или обновляет информацию о пользователе.
-    
+
     Args:
         chat_id: ID пользователя в Telegram
         username: имя пользователя (опционально)
         first_name: имя (опционально)
         notification_time: время уведомления в формате HH:MM (опционально)
-        
+
     Returns:
         bool: True, если данные успешно сохранены
     """
     try:
         if os.path.exists(USERS_FILE):
             df = pd.read_csv(USERS_FILE)
-            
+
             # Проверка, существует ли пользователь
             if chat_id in df['chat_id'].values:
                 # Обновление существующего пользователя
                 df.loc[df['chat_id'] == chat_id, 'username'] = username
                 df.loc[df['chat_id'] == chat_id, 'first_name'] = first_name
-                
+
                 if notification_time is not None:
                     df.loc[df['chat_id'] == chat_id, 'notification_time'] = notification_time
             else:
@@ -170,7 +252,7 @@ def save_user(chat_id: int, username: Optional[str], first_name: Optional[str], 
                     'notification_time': notification_time
                 }
                 df = pd.concat([df, pd.DataFrame([new_user])], ignore_index=True)
-            
+
             df.to_csv(USERS_FILE, index=False)
         else:
             # Создание нового файла пользователей с этим пользователем
@@ -182,7 +264,7 @@ def save_user(chat_id: int, username: Optional[str], first_name: Optional[str], 
                 'notification_time': notification_time
             }
             pd.DataFrame([new_user]).to_csv(USERS_FILE, index=False)
-        
+
         logger.info(f"Данные пользователя {chat_id} успешно сохранены")
         return True
     except Exception as e:
@@ -192,32 +274,32 @@ def save_user(chat_id: int, username: Optional[str], first_name: Optional[str], 
 
 def get_users_for_notification(current_time: str) -> List[Dict[str, Any]]:
     """
-    Получает список пользователей, которым нужно отправить уведомление 
+    Получает список пользователей, которым нужно отправить уведомление
     в указанное время.
-    
+
     Args:
         current_time: текущее время в формате HH:MM
-        
+
     Returns:
         List[Dict[str, Any]]: список пользователей для уведомления
     """
     if not os.path.exists(USERS_FILE):
         logger.warning(f"Файл пользователей {USERS_FILE} не найден")
         return []
-    
+
     try:
         df = pd.read_csv(USERS_FILE)
-        
+
         # Фильтрация пользователей, у которых время уведомления совпадает с текущим
         users_to_notify = df[df['notification_time'] == current_time]
-        
+
         if len(users_to_notify) == 0:
             return []
-        
+
         # Преобразование в список словарей
         users_list = users_to_notify.to_dict('records')
         logger.info(f"Найдено {len(users_list)} пользователей для уведомления в {current_time}")
-        
+
         return users_list
     except Exception as e:
         logger.error(f"Ошибка при получении пользователей для уведомления: {e}")
