@@ -38,3 +38,6 @@ users.csv
 .vscode/
 *.swp
 *.swo
+
+# Файлы ОС
+.DS_Store
