@@ -44,12 +44,22 @@ async def start_visualization(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_id = update.effective_chat.id
     logger.info(f"Пользователь {chat_id} начал процесс визуализации")
 
+    # Проверка наличия записей у пользователя
+    entries = get_user_entries(chat_id)
+
+    if not entries:
+        await update.message.reply_text(
+            "У вас еще нет записей в дневнике или не удалось расшифровать данные.",
+            reply_markup=MAIN_KEYBOARD
+        )
+        return ConversationHandler.END
+
     # Создаем клавиатуру для выбора типа графика
     keyboard = [
-        [InlineKeyboardButton("Динамика показателей", callback_data="chart_time_series")],
-        [InlineKeyboardButton("Распределение значений", callback_data="chart_distribution")],
-        [InlineKeyboardButton("Корреляция показателей", callback_data="chart_correlation")],
-        [InlineKeyboardButton("Календарь настроения", callback_data="chart_calendar")]
+        [InlineKeyboardButton("Динамика показателей", callback_data="time_series")],
+        [InlineKeyboardButton("Распределение значений", callback_data="distribution")],
+        [InlineKeyboardButton("Корреляция показателей", callback_data="correlation")],
+        [InlineKeyboardButton("Календарь настроения", callback_data="calendar")]
     ]
 
     await update.message.reply_text(
@@ -78,22 +88,25 @@ async def select_chart_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = query.message.chat_id
     chart_type = query.data
 
+    # Логирование для отладки
+    logger.info(f"Пользователь {chat_id} выбрал тип графика: {chart_type}")
+
     # Сохраняем выбранный тип графика
     context.user_data['chart_type'] = chart_type
 
-    if chart_type == "chart_time_series":
+    if chart_type == "time_series":
         # Для динамики показателей предлагаем выбрать несколько метрик
         keyboard = [
             [
-                InlineKeyboardButton("Настроение", callback_data="metric_mood"),
-                InlineKeyboardButton("Сон", callback_data="metric_sleep")
+                InlineKeyboardButton("Настроение", callback_data="mood"),
+                InlineKeyboardButton("Сон", callback_data="sleep")
             ],
             [
-                InlineKeyboardButton("Тревога", callback_data="metric_anxiety"),
-                InlineKeyboardButton("Депрессия", callback_data="metric_depression")
+                InlineKeyboardButton("Тревога", callback_data="anxiety"),
+                InlineKeyboardButton("Депрессия", callback_data="depression")
             ],
             [
-                InlineKeyboardButton("Все показатели", callback_data="metric_all")
+                InlineKeyboardButton("Все показатели", callback_data="all")
             ]
         ]
 
@@ -104,20 +117,20 @@ async def select_chart_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return SELECT_METRIC
 
-    elif chart_type == "chart_distribution":
+    elif chart_type == "distribution":
         # Для распределения предлагаем выбрать одну метрику
         keyboard = [
             [
-                InlineKeyboardButton("Настроение", callback_data="metric_mood"),
-                InlineKeyboardButton("Сон", callback_data="metric_sleep")
+                InlineKeyboardButton("Настроение", callback_data="mood"),
+                InlineKeyboardButton("Сон", callback_data="sleep")
             ],
             [
-                InlineKeyboardButton("Тревога", callback_data="metric_anxiety"),
-                InlineKeyboardButton("Депрессия", callback_data="metric_depression")
+                InlineKeyboardButton("Тревога", callback_data="anxiety"),
+                InlineKeyboardButton("Депрессия", callback_data="depression")
             ],
             [
-                InlineKeyboardButton("Работоспособность", callback_data="metric_productivity"),
-                InlineKeyboardButton("Общительность", callback_data="metric_sociability")
+                InlineKeyboardButton("Работоспособность", callback_data="productivity"),
+                InlineKeyboardButton("Общительность", callback_data="sociability")
             ]
         ]
 
@@ -128,21 +141,21 @@ async def select_chart_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         return SELECT_METRIC
 
-    elif chart_type == "chart_correlation":
+    elif chart_type == "correlation":
         # Для корреляции не нужно выбирать метрики, сразу показываем корреляцию всех показателей
         await generate_correlation_chart(query.message, chat_id)
         return ConversationHandler.END
 
-    elif chart_type == "chart_calendar":
+    elif chart_type == "calendar":
         # Для календаря предлагаем выбрать одну метрику
         keyboard = [
             [
-                InlineKeyboardButton("Настроение", callback_data="metric_mood"),
-                InlineKeyboardButton("Сон", callback_data="metric_sleep")
+                InlineKeyboardButton("Настроение", callback_data="mood"),
+                InlineKeyboardButton("Сон", callback_data="sleep")
             ],
             [
-                InlineKeyboardButton("Тревога", callback_data="metric_anxiety"),
-                InlineKeyboardButton("Депрессия", callback_data="metric_depression")
+                InlineKeyboardButton("Тревога", callback_data="anxiety"),
+                InlineKeyboardButton("Депрессия", callback_data="depression")
             ]
         ]
 
@@ -177,32 +190,35 @@ async def select_metric(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     chat_id = query.message.chat_id
-    metric = query.data.replace("metric_", "")
+    metric = query.data
+
+    # Логирование для отладки
+    logger.info(f"Пользователь {chat_id} выбрал метрику: {metric}")
 
     # Сохраняем выбранную метрику
     context.user_data['metric'] = metric
 
     chart_type = context.user_data.get('chart_type')
 
-    if chart_type == "chart_time_series":
+    if chart_type == "time_series":
         await generate_time_series_chart(query.message, chat_id, metric)
-    elif chart_type == "chart_distribution":
+    elif chart_type == "distribution":
         await generate_distribution_chart(query.message, chat_id, metric)
-    elif chart_type == "chart_calendar":
+    elif chart_type == "calendar":
         # Для календаря нужно выбрать период
         now = datetime.now()
         keyboard = [
             [
                 InlineKeyboardButton(f"{now.month - 2}/{now.year}",
-                                     callback_data=f"period_{now.year}_{now.month - 2}")
+                                     callback_data=f"{now.year}_{now.month - 2}")
             ],
             [
                 InlineKeyboardButton(f"{now.month - 1}/{now.year}",
-                                     callback_data=f"period_{now.year}_{now.month - 1}")
+                                     callback_data=f"{now.year}_{now.month - 1}")
             ],
             [
                 InlineKeyboardButton(f"{now.month}/{now.year}",
-                                     callback_data=f"period_{now.year}_{now.month}")
+                                     callback_data=f"{now.year}_{now.month}")
             ]
         ]
 
@@ -231,7 +247,10 @@ async def select_period(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     chat_id = query.message.chat_id
-    _, year, month = query.data.split("_")
+    year, month = query.data.split("_")
+
+    # Логирование для отладки
+    logger.info(f"Пользователь {chat_id} выбрал период: год={year}, месяц={month}")
 
     # Генерация календаря настроения
     metric = context.user_data.get('metric')
@@ -470,9 +489,9 @@ def register(application):
     viz_handler = ConversationHandler(
         entry_points=[CommandHandler("visualize", start_visualization)],
         states={
-            SELECT_CHART_TYPE: [CallbackQueryHandler(select_chart_type, pattern=r"^chart_")],
-            SELECT_METRIC: [CallbackQueryHandler(select_metric, pattern=r"^metric_")],
-            SELECT_PERIOD: [CallbackQueryHandler(select_period, pattern=r"^period_")]
+            SELECT_CHART_TYPE: [CallbackQueryHandler(select_chart_type)],
+            SELECT_METRIC: [CallbackQueryHandler(select_metric)],
+            SELECT_PERIOD: [CallbackQueryHandler(select_period)]
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )

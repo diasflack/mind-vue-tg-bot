@@ -19,10 +19,13 @@ MAIN_KEYBOARD = ReplyKeyboardMarkup([
 ], resize_keyboard=True, is_persistent=True)
 
 
-def get_date_range_keyboard() -> InlineKeyboardMarkup:
+def get_date_range_keyboard(prefix=""):
     """
     Создает inline-клавиатуру для выбора диапазона дат.
-    
+
+    Args:
+        prefix: префикс для callback_data
+
     Returns:
         InlineKeyboardMarkup: клавиатура с кнопками выбора диапазона дат
     """
@@ -31,12 +34,12 @@ def get_date_range_keyboard() -> InlineKeyboardMarkup:
     week_ago = (today - timedelta(days=7)).strftime('%Y-%m-%d')
     month_ago = (today - timedelta(days=30)).strftime('%Y-%m-%d')
     quarter_ago = (today - timedelta(days=90)).strftime('%Y-%m-%d')
-    
+
     keyboard = [
-        [InlineKeyboardButton("Последние 7 дней", callback_data=f"date_range_{week_ago}_{today}")],
-        [InlineKeyboardButton("Последние 30 дней", callback_data=f"date_range_{month_ago}_{today}")],
-        [InlineKeyboardButton("Последние 90 дней", callback_data=f"date_range_{quarter_ago}_{today}")],
-        [InlineKeyboardButton("Всё время", callback_data="date_range_all")]
+        [InlineKeyboardButton("Последние 7 дней", callback_data=f"{prefix}date_range_{week_ago}_{today}")],
+        [InlineKeyboardButton("Последние 30 дней", callback_data=f"{prefix}date_range_{month_ago}_{today}")],
+        [InlineKeyboardButton("Последние 90 дней", callback_data=f"{prefix}date_range_{quarter_ago}_{today}")],
+        [InlineKeyboardButton("Всё время", callback_data=f"{prefix}date_range_all")]
     ]
-    
+
     return InlineKeyboardMarkup(keyboard)

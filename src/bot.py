@@ -9,7 +9,7 @@ from telegram.ext import Application
 from src.config import TELEGRAM_BOT_TOKEN
 from src.data.storage import initialize_files
 from src.handlers import (
-    basic, entry, stats, notifications, sharing, visualization, import_csv, delete
+    basic, entry, stats, notifications, sharing, visualization, import_csv, delete, analytics
 )
 
 # Настройка логгирования
@@ -41,7 +41,8 @@ def create_application():
     sharing.register(application)
     visualization.register(application)
     import_csv.register(application)
-    delete.register(application)  # Регистрация нового обработчика удаления
+    delete.register(application)
+    analytics.register(application)  # Регистрация нового обработчика аналитики
 
     # Настройка планировщика для уведомлений
     if application.job_queue is None:
