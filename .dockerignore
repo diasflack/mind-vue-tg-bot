@@ -1,0 +1,29 @@
+# Version control
+.git
+.gitignore
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+
+# Virtual environments
+venv/
+env/
+
+# Environment variables
+.env
+
+# User data (will be mounted as volume)
+user_data/
+users.csv
+
+# Editor configs
+.vscode/
+.idea/
+
+# Logs
+*.log
