@@ -1,0 +1,15 @@
+services:
+  mind-vue-bot:
+    build: .
+    volumes:
+      # Mount your local code directory to the container
+      - ./:/app
+      # Mount a separate volume for user data
+      - ./user_data:/app/user_data
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    # Keep the container running
+    tty: true
+    stdin_open: true
+    # Restart if something goes wrong
+    restart: unless-stopped

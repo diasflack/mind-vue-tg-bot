@@ -1,81 +1,59 @@
 #!/bin/bash
 
-# Simple deployment script for the Telegram Mood Tracker Bot
-# Usage: ./deploy.sh [build|run|logs|stop|start|restart]
+# Development script for the Telegram Mood Tracker Bot
+# Usage: ./dev.sh [start|logs|restart|stop]
 
 # Check if .env file exists
 if [ ! -f .env ]; then
-    echo "Error: .env file not found. Please create it with your TELEGRAM_BOT_TOKEN."
-    echo "Example: echo 'TELEGRAM_BOT_TOKEN=your_token_here' > .env"
+    echo "Error: .env file not found. Creating template..."
+    echo "TELEGRAM_BOT_TOKEN=your_token_here" > .env
+    echo "Please edit .env with your actual token"
     exit 1
 fi
 
-# Load environment variables from .env file
-export $(grep -v '^#' .env | xargs)
-
-# Check if TELEGRAM_BOT_TOKEN is set
-if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
-    echo "Error: TELEGRAM_BOT_TOKEN is not set in .env file."
-    exit 1
-fi
-
-# Docker image name
-IMAGE_NAME="mind-vue-bot"
-CONTAINER_NAME="mind-vue-bot"
+# Docker Compose file
+COMPOSE_FILE="docker-compose.yml"
 
 # Command handling
 case "$1" in
-    build)
-        echo "Building Docker image..."
-        docker build --no-cache -t $IMAGE_NAME .
+    start)
+        echo "Starting development environment..."
+        docker-compose -f $COMPOSE_FILE up -d
+        echo "To view logs: ./dev.sh logs"
+        echo "To run the bot: ./dev.sh exec"
         ;;
-    run)
-        echo "Running container..."
-        # Stop and remove existing container if it exists
-        docker stop $CONTAINER_NAME 2>/dev/null || true
-        docker rm $CONTAINER_NAME 2>/dev/null || true
-
-        # Create data directory if it doesn't exist
-        mkdir -p "$(pwd)/user_data"
-
-        # Run new container
-        docker run -d \
-            --name $CONTAINER_NAME \
-            -e TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN \
-            -v "$(pwd)/user_data:/app/user_data" \
-            --restart unless-stopped \
-            $IMAGE_NAME
+    exec)
+        echo "Running the bot in the container..."
+        docker-compose -f $COMPOSE_FILE exec mind-vue-bot python main.py
         ;;
     logs)
         echo "Showing logs..."
-        docker logs -f $CONTAINER_NAME
+        docker-compose -f $COMPOSE_FILE logs -f
         ;;
     stop)
-        echo "Stopping container..."
-        docker stop $CONTAINER_NAME
-        ;;
-    start)
-        echo "Starting container..."
-        docker start $CONTAINER_NAME
+        echo "Stopping development environment..."
+        docker-compose -f $COMPOSE_FILE down
         ;;
     restart)
-        echo "Restarting container..."
-        docker restart $CONTAINER_NAME
+        echo "Restarting bot process..."
+        # This restarts just the Python process, not the container
+        docker-compose -f $COMPOSE_FILE exec mind-vue-bot pkill -f "python main.py" || true
+        echo "To start the bot again: ./dev.sh exec"
         ;;
-    deploy)
-        echo "Full deployment: build and run..."
-        $0 build && $0 run
+    rebuild)
+        echo "Rebuilding container..."
+        docker-compose -f $COMPOSE_FILE build --no-cache
+        docker-compose -f $COMPOSE_FILE up -d
         ;;
     *)
-        echo "Usage: $0 [build|run|logs|stop|start|restart|deploy]"
+        echo "Usage: $0 [start|exec|logs|stop|restart|rebuild]"
         echo ""
-        echo "  build   - Build the Docker image"
-        echo "  run     - Run the container"
-        echo "  logs    - Show container logs"
-        echo "  stop    - Stop the container"
-        echo "  start   - Start the container"
-        echo "  restart - Restart the container"
-        echo "  deploy  - Build and run in one command"
+        echo "  start   - Start development environment"
+        echo "  exec    - Run the bot in the container"
+        echo "  logs    - Show logs"
+        echo "  stop    - Stop development environment"
+        echo "  restart - Restart bot process (after code changes)"
+        echo "  rebuild - Rebuild container (only needed for dependency changes)"
         exit 1
         ;;
 esac
