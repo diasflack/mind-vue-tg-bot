@@ -15,6 +15,20 @@ from src.handlers import (
 # Настройка логгирования
 logger = logging.getLogger(__name__)
 
+
+async def pre_init(application):
+    """
+    Выполняется перед инициализацией приложения.
+    Удаляет webhook и очищает очередь обновлений.
+    """
+    try:
+        # Удаление webhook и очистка очереди обновлений
+        await application.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook удален, очередь обновлений очищена")
+    except Exception as e:
+        logger.error(f"Ошибка при удалении webhook: {e}")
+
+
 def create_application():
     """
     Создает и настраивает экземпляр приложения.
@@ -33,6 +47,10 @@ def create_application():
     # Создание приложения
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
+    # Функция предварительной инициализации (удаление webhook)
+    application.post_init = pre_init
+    application.post_shutdown = lambda app: logger.info("Бот остановлен")
+
     # Регистрация обработчиков
     basic.register(application)
     entry.register(application)
@@ -42,7 +60,7 @@ def create_application():
     visualization.register(application)
     import_csv.register(application)
     delete.register(application)
-    analytics.register(application)  # Регистрация нового обработчика аналитики
+    analytics.register(application)
 
     # Настройка планировщика для уведомлений
     if application.job_queue is None:
@@ -55,3 +73,13 @@ def create_application():
 
     logger.info("Приложение успешно настроено и готово к запуску")
     return application
+
+
+def run():
+    """
+    Запускает бота.
+    """
+    app = create_application()
+
+    # Запуск бота с очисткой очереди обновлений
+    app.run_polling(drop_pending_updates=True)

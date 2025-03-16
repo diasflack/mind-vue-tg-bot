@@ -11,12 +11,13 @@ from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     ContextTypes, ConversationHandler, CommandHandler,
-    MessageHandler, filters, CallbackQueryHandler
+    MessageHandler, filters, CallbackQueryHandler, Application
 )
 
 from src.utils.keyboards import MAIN_KEYBOARD
 from src.data.storage import get_user_data_file, get_user_entries
 from src.data.encryption import encrypt_for_sharing
+from src.utils.conversation_manager import register_conversation, end_conversation, end_all_conversations
 
 # Настройка логгирования
 logger = logging.getLogger(__name__)
@@ -29,16 +30,53 @@ SHARE_PASSWORD_ENTRY = 3
 # Префикс для callback-данных отправки дневника
 SHARE_PREFIX = "share_"
 
+# Имена обработчиков для менеджера диалогов
+SEND_HANDLER_NAME = "send_diary_handler"
+VIEW_HANDLER_NAME = "view_shared_handler"
 
-async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Глобальные объекты для хранения ссылок на обработчики
+send_conversation_handler = None
+view_shared_handler = None
+
+
+async def custom_cancel_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Локальный обработчик команды /cancel для диалогов обмена данными.
+    Локальный обработчик отмены для диалога отправки дневника.
     """
     chat_id = update.effective_chat.id
-    logger.info(f"Пользователь {chat_id} отменил обмен данными")
+    logger.info(f"Отмена отправки дневника для пользователя {chat_id}")
+
+    # Завершение диалога в менеджере
+    end_conversation(chat_id, SEND_HANDLER_NAME)
+
+    # Очистка данных пользователя
+    if 'recipient_id' in context.user_data:
+        context.user_data.pop('recipient_id')
+    if 'selected_date_range' in context.user_data:
+        context.user_data.pop('selected_date_range')
+    if 'sharing_password' in context.user_data:
+        context.user_data.pop('sharing_password')
 
     await update.message.reply_text(
-        "Действие отменено.",
+        "Отправка дневника отменена.",
+        reply_markup=MAIN_KEYBOARD
+    )
+
+    return ConversationHandler.END
+
+
+async def custom_cancel_view(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Локальный обработчик отмены для диалога просмотра дневника.
+    """
+    chat_id = update.effective_chat.id
+    logger.info(f"Отмена просмотра дневника для пользователя {chat_id}")
+
+    # Завершение диалога в менеджере
+    end_conversation(chat_id, VIEW_HANDLER_NAME)
+
+    await update.message.reply_text(
+        "Просмотр дневника отменен.",
         reply_markup=MAIN_KEYBOARD
     )
 
@@ -50,13 +88,22 @@ async def send_diary_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Начинает процесс отправки дневника другому пользователю.
     Запрашивает ID получателя.
     """
+    # Завершаем все активные диалоги пользователя
     chat_id = update.effective_chat.id
+    end_all_conversations(chat_id)
+
+    # Регистрируем новый активный диалог
+    register_conversation(chat_id, SEND_HANDLER_NAME, SEND_DIARY_USER_ID)
+
     logger.info(f"Пользователь {chat_id} начал процесс отправки дневника")
 
     # Проверка наличия записей у пользователя
     entries = get_user_entries(chat_id)
 
     if not entries:
+        # Завершаем диалог, так как у пользователя нет записей
+        end_conversation(chat_id, SEND_HANDLER_NAME)
+
         await update.message.reply_text(
             "У вас еще нет записей в дневнике или не удалось расшифровать данные.",
             reply_markup=MAIN_KEYBOARD
@@ -78,6 +125,9 @@ async def send_diary_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """
     text = update.message.text
     chat_id = update.effective_chat.id
+
+    # Обновление состояния в менеджере диалогов
+    register_conversation(chat_id, SEND_HANDLER_NAME, SEND_DIARY_START_DATE)
 
     # Попытка преобразовать ввод в целое число
     try:
@@ -129,6 +179,10 @@ async def process_date_range(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await query.answer()
 
     chat_id = query.message.chat_id
+
+    # Завершение диалога в менеджере диалогов
+    end_conversation(chat_id, SEND_HANDLER_NAME)
+
     recipient_id = context.user_data.get('recipient_id')
 
     if not recipient_id:
@@ -293,7 +347,13 @@ async def view_shared_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Начинает процесс просмотра полученного дневника.
     Запрашивает пароль для расшифровки.
     """
+    # Завершаем все активные диалоги пользователя
     chat_id = update.effective_chat.id
+    end_all_conversations(chat_id)
+
+    # Регистрируем новый активный диалог
+    register_conversation(chat_id, VIEW_HANDLER_NAME, SHARE_PASSWORD_ENTRY)
+
     logger.info(f"Пользователь {chat_id} начал процесс просмотра полученного дневника")
 
     # Запрос пересылки файла дневника
@@ -315,9 +375,10 @@ async def process_shared_password(update: Update, context: ContextTypes.DEFAULT_
     """
     Обрабатывает пароль для просмотра общего дневника.
     """
-    # В полной реализации здесь будет расшифровка загруженного файла
-    # и отображение содержимого дневника
+    # Завершение диалога в менеджере диалогов
     chat_id = update.effective_chat.id
+    end_conversation(chat_id, VIEW_HANDLER_NAME)
+
     logger.info(f"Пользователь {chat_id} ввел пароль для расшифровки дневника")
 
     await update.message.reply_text(
@@ -329,31 +390,52 @@ async def process_shared_password(update: Update, context: ContextTypes.DEFAULT_
     return ConversationHandler.END
 
 
-def register(application):
+def register(application: Application):
     """
     Регистрирует обработчики команд для обмена данными.
     """
-    # Регистрация обработчика для отправки дневника
-    send_diary_handler = ConversationHandler(
+    global send_conversation_handler, view_shared_handler
+
+    # Создаем новые обработчики для отправки дневника
+    user_id_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, send_diary_user_id)
+    date_range_handler = CallbackQueryHandler(process_date_range, pattern=f"^{SHARE_PREFIX}")
+
+    # Создание обработчика разговора для отправки дневника
+    send_conversation_handler = ConversationHandler(
         entry_points=[CommandHandler("send", send_diary_start)],
         states={
-            SEND_DIARY_USER_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, send_diary_user_id)],
-            SEND_DIARY_START_DATE: [CallbackQueryHandler(process_date_range, pattern=f"^{SHARE_PREFIX}")],
+            SEND_DIARY_USER_ID: [user_id_handler],
+            SEND_DIARY_START_DATE: [date_range_handler],
         },
-        fallbacks=[CommandHandler("cancel", cancel_command)],
-        name="send_diary_conversation"  # Уникальное имя для обработчика
+        fallbacks=[CommandHandler("cancel", custom_cancel_send)],
+        name=SEND_HANDLER_NAME,
+        persistent=False,
+        allow_reentry=True,
     )
-    application.add_handler(send_diary_handler)
 
-    # Регистрация обработчика для просмотра полученного дневника
+    # Создаем новые обработчики для просмотра дневника
+    password_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, process_shared_password)
+
+    # Создание обработчика разговора для просмотра полученного дневника
     view_shared_handler = ConversationHandler(
         entry_points=[CommandHandler("view_shared", view_shared_start)],
         states={
-            SHARE_PASSWORD_ENTRY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_shared_password)],
+            SHARE_PASSWORD_ENTRY: [password_handler],
         },
-        fallbacks=[CommandHandler("cancel", cancel_command)],
-        name="view_shared_conversation"  # Уникальное имя для обработчика
+        fallbacks=[CommandHandler("cancel", custom_cancel_view)],
+        name=VIEW_HANDLER_NAME,
+        persistent=False,
+        allow_reentry=True,
     )
+
+    # Удаляем старые обработчики если они есть
+    for handler in application.handlers.get(0, [])[:]:
+        if isinstance(handler, ConversationHandler) and getattr(handler, 'name', None) in [SEND_HANDLER_NAME, VIEW_HANDLER_NAME]:
+            application.remove_handler(handler)
+            logger.info(f"Удален старый обработчик диалога {getattr(handler, 'name', 'unknown')}")
+
+    # Добавляем новые обработчики
+    application.add_handler(send_conversation_handler)
     application.add_handler(view_shared_handler)
 
     logger.info("Обработчики обмена данными зарегистрированы")

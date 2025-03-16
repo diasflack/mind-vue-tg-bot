@@ -141,11 +141,14 @@ def get_user_entries(chat_id: int, start_date: Optional[str] = None, end_date: O
         # Расшифровка всех записей
         decrypted_entries = []
         for _, row in df.iterrows():
-            entry = decrypt_data(row['encrypted_data'], chat_id)
-            if entry:
-                decrypted_entries.append(entry)
-            else:
-                logger.warning(f"Не удалось расшифровать запись для пользователя {chat_id}")
+            try:
+                entry = decrypt_data(row['encrypted_data'], chat_id)
+                if entry:
+                    decrypted_entries.append(entry)
+                else:
+                    logger.warning(f"Не удалось расшифровать запись для пользователя {chat_id}")
+            except Exception as e:
+                logger.error(f"Ошибка при расшифровке записи: {e}")
 
         logger.info(f"Успешно получено {len(decrypted_entries)} записей для пользователя {chat_id}")
         return decrypted_entries
@@ -215,6 +218,30 @@ def delete_entry_by_date(chat_id: int, date: str) -> bool:
         return True
     except Exception as e:
         logger.error(f"Ошибка при удалении записи на дату {date} для пользователя {chat_id}: {e}")
+        return False
+
+
+def has_entry_for_date(chat_id: int, date: str) -> bool:
+    """
+    Проверяет, существует ли запись для указанной даты.
+
+    Args:
+        chat_id: ID пользователя в Telegram
+        date: дата в формате YYYY-MM-DD
+
+    Returns:
+        bool: True, если запись существует
+    """
+    user_file = get_user_data_file(chat_id)
+
+    if not os.path.exists(user_file):
+        return False
+
+    try:
+        df = pd.read_csv(user_file)
+        return date in df['date'].values
+    except Exception as e:
+        logger.error(f"Ошибка при проверке записи на дату {date} для пользователя {chat_id}: {e}")
         return False
 
 
@@ -304,3 +331,27 @@ def get_users_for_notification(current_time: str) -> List[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"Ошибка при получении пользователей для уведомления: {e}")
         return []
+
+
+def get_entry_count_by_day(chat_id: int) -> Dict[str, int]:
+    """
+    Возвращает словарь с количеством записей по датам.
+
+    Args:
+        chat_id: ID пользователя в Telegram
+
+    Returns:
+        Dict[str, int]: словарь {дата: количество записей}
+    """
+    user_file = get_user_data_file(chat_id)
+
+    if not os.path.exists(user_file):
+        return {}
+
+    try:
+        df = pd.read_csv(user_file)
+        date_counts = df['date'].value_counts().to_dict()
+        return date_counts
+    except Exception as e:
+        logger.error(f"Ошибка при получении статистики записей для пользователя {chat_id}: {e}")
+        return {}

@@ -5,7 +5,7 @@ Telegram Mood Tracker Bot - точка входа.
 """
 
 import logging
-from src.bot import create_application
+from src.bot import run
 from src.config import initialize_environment
 
 # Настройка логгирования
@@ -30,10 +30,9 @@ def main():
 
         logger.info("Окружение успешно инициализировано")
 
-        # Создание и запуск приложения
+        # Запуск бота
         logger.info("Запуск бота для отслеживания настроения...")
-        app = create_application()
-        app.run_polling()
+        run()
     except Exception as e:
         logger.error(f"Ошибка при запуске бота: {e}")
         raise

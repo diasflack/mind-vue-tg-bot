@@ -82,3 +82,21 @@ def is_valid_time_format(time_str: str) -> bool:
         return 0 <= hour <= 23 and 0 <= minute <= 59
     except (ValueError, TypeError):
         return False
+
+
+def format_date(date_str: str, output_format: str = '%d.%m.%Y') -> str:
+    """
+    Форматирует дату из формата YYYY-MM-DD в указанный формат.
+
+    Args:
+        date_str: дата в формате 'YYYY-MM-DD'
+        output_format: формат вывода даты
+
+    Returns:
+        str: отформатированная дата
+    """
+    try:
+        date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d')
+        return date_obj.strftime(output_format)
+    except ValueError:
+        return date_str  # Возвращаем исходную строку в случае ошибки

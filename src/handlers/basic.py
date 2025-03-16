@@ -3,11 +3,13 @@
 """
 
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.ext import ContextTypes, CommandHandler, ConversationHandler, CallbackQueryHandler
 
 from src.utils.keyboards import MAIN_KEYBOARD
-from src.data.storage import save_user
+from src.data.storage import save_user, get_user_entries
+from src.utils.formatters import format_entry_list
+from src.utils.conversation_manager import end_all_conversations, dump_all_conversations, has_active_conversations
 
 # Настройка логгирования
 logger = logging.getLogger(__name__)
@@ -21,8 +23,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Обработчик команды /start.
     Приветствует пользователя и объясняет основные функции бота.
     """
-    # Сохранение информации о пользователе
+    # Завершаем все активные диалоги пользователя перед началом нового
     chat_id = update.effective_chat.id
+    end_all_conversations(chat_id)
+
+    # Сохранение информации о пользователе
     username = update.effective_user.username
     first_name = update.effective_user.first_name
     save_user(chat_id, username, first_name)
@@ -57,7 +62,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Обработчик команды /help.
     Отображает категории команд и позволяет пользователю выбрать категорию для подробной информации.
     """
+    # Завершаем все активные диалоги пользователя перед началом нового
     chat_id = update.effective_chat.id
+    end_all_conversations(chat_id)
+
     logger.info(f"Пользователь {chat_id} запросил справку")
 
     # Создание кнопок для выбора категории команд с эмодзи
@@ -141,23 +149,27 @@ async def handle_help_callback(update: Update, context: ContextTypes.DEFAULT_TYP
             category_text = (
                 "📝 Добавление данных\n\n"
                 "• /add - добавить новую запись (я проведу вас через все шаги)\n"
-                "• /import - импортировать данные из CSV-файла\n\n"
-                "Примечание: В один день может быть только одна запись. Если вы добавите новую запись "
-                "в тот же день, она заменит предыдущую."
+                "• /import - импортировать данные из CSV-файла\n"
+                "• /recent - показать последние записи\n\n"
+                "Примечание: Вы можете использовать команду /add несколько раз в течение дня. "
+                "При этом новая запись заменит предыдущую за текущую дату. "
+                "Это удобно, если вы хотите обновить свои показатели в течение дня."
             )
         elif action == "analytics":
             category_text = (
                 "📊 Аналитика и визуализация\n\n"
                 "• /stats - показать статистику по вашим записям\n"
                 "• /visualize - построить различные графики на основе ваших данных\n"
-                "• /analytics - выявить паттерны и зависимости в ваших данных\n\n"
+                "• /analytics - выявить паттерны и зависимости в ваших данных\n"
+                "• /recent - показать последние записи\n\n"
                 "Для получения наиболее точного анализа рекомендуется иметь не менее 7 записей."
             )
         elif action == "data_management":
             category_text = (
                 "🗂️ Управление данными\n\n"
                 "• /download - скачать ваш дневник в формате CSV\n"
-                "• /delete - удалить записи (все или за определенную дату)\n\n"
+                "• /delete - удалить записи (все или за определенную дату)\n"
+                "• /recent - показать последние записи\n\n"
                 "Внимание: Удаление данных необратимо. Рекомендуется регулярно скачивать копию данных."
             )
         elif action == "sharing":
@@ -181,7 +193,7 @@ async def handle_help_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 "• /start - начать работу с ботом\n"
                 "• /help - показать это сообщение\n"
                 "• /add - добавить новую запись\n"
-                "• /cancel - отменить текущую операцию\n"
+                "• /cancel - отменить текущую операцию или диалог\n"
                 "• /stats - показать статистику\n"
                 "• /visualize - построить графики\n"
                 "• /analytics - выявить паттерны и закономерности\n"
@@ -192,7 +204,8 @@ async def handle_help_callback(update: Update, context: ContextTypes.DEFAULT_TYP
                 "• /view_shared - просмотреть полученный дневник\n"
                 "• /id - показать ваш ID\n"
                 "• /notify HH:MM - настроить уведомления\n"
-                "• /cancel_notify - отключить уведомления"
+                "• /cancel_notify - отключить уведомления\n"
+                "• /recent - показать последние записи"
             )
         else:
             category_text = "Неизвестная категория. Пожалуйста, выберите из предложенных."
@@ -215,7 +228,10 @@ async def get_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Обработчик команды /id.
     Отправляет пользователю его ID для обмена дневниками.
     """
+    # Завершаем все активные диалоги пользователя перед началом нового
     chat_id = update.effective_chat.id
+    end_all_conversations(chat_id)
+
     logger.info(f"Пользователь {chat_id} запросил свой ID")
 
     await update.message.reply_text(
@@ -231,17 +247,124 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     Обработчик команды /cancel.
     Отменяет любой текущий диалог с пользователем.
     """
-    logger.info(f"Пользователь {update.effective_chat.id} отменил операцию")
+    chat_id = update.effective_chat.id
+    logger.info(f"Пользователь {chat_id} использовал команду /cancel")
 
-    await update.message.reply_text(
-        "❌ Действие отменено.",
-        reply_markup=MAIN_KEYBOARD
-    )
+    # Вывод всех активных диалогов для отладки
+    dump_all_conversations()
+
+    # Проверка есть ли активные диалоги перед отменой
+    has_active = has_active_conversations(chat_id)
+
+    # Завершаем все активные диалоги
+    ended_conversations = end_all_conversations(chat_id)
+
+    # Вывод всех активных диалогов после отмены для отладки
+    dump_all_conversations()
 
     # Очистка данных пользователя
     context.user_data.clear()
 
+    # Формируем сообщение в зависимости от наличия активных диалогов
+    if ended_conversations:
+        message = "❌ Все активные команды отменены."
+        logger.info(f"Отменены команды: {ended_conversations}")
+    else:
+        if has_active:
+            message = "❌ Все активные команды отменены."
+            logger.info("Активные команды были, но не найдены в менеджере")
+        else:
+            message = "ℹ️ Нет активных команд для отмены."
+            logger.info("Активные команды не найдены")
+
+    await update.message.reply_text(
+        message,
+        reply_markup=MAIN_KEYBOARD
+    )
+
     return ConversationHandler.END
+
+
+async def recent_entries(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик команды /recent.
+    Отображает недавние записи пользователя.
+    """
+    # Завершаем все активные диалоги пользователя перед началом нового
+    chat_id = update.effective_chat.id
+    end_all_conversations(chat_id)
+
+    logger.info(f"Пользователь {chat_id} запросил недавние записи")
+
+    # Получение записей пользователя
+    entries = get_user_entries(chat_id)
+
+    if not entries:
+        await update.message.reply_text(
+            "У вас еще нет записей в дневнике или не удалось расшифровать данные.",
+            reply_markup=MAIN_KEYBOARD
+        )
+        return
+
+    # Форматирование и отправка списка последних записей
+    formatted_entries = format_entry_list(entries)
+
+    await update.message.reply_text(
+        formatted_entries,
+        reply_markup=MAIN_KEYBOARD
+    )
+
+
+async def setup_commands(application):
+    """
+    Устанавливает список команд для меню бота.
+    """
+    commands = [
+        BotCommand("start", "Начать работу с ботом"),
+        BotCommand("help", "Показать справку"),
+        BotCommand("add", "Добавить новую запись"),
+        BotCommand("cancel", "Отменить активную команду"),
+        BotCommand("stats", "Показать статистику"),
+        BotCommand("recent", "Показать последние записи"),
+        BotCommand("visualize", "Построить графики"),
+        BotCommand("analytics", "Выявить паттерны"),
+        BotCommand("download", "Скачать дневник в CSV"),
+        BotCommand("delete", "Удалить записи"),
+        BotCommand("notify", "Настроить уведомления"),
+        BotCommand("cancel_notify", "Отключить уведомления"),
+        BotCommand("id", "Показать ваш ID"),
+        BotCommand("send", "Отправить дневник другому"),
+        BotCommand("view_shared", "Просмотреть полученный дневник")
+    ]
+
+    await application.bot.set_my_commands(commands)
+    logger.info("Установлены команды для меню бота")
+
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обработчик ошибок для приложения.
+    """
+    logger.error(f"Произошла ошибка при обработке обновления: {context.error}")
+
+    # Если обновление доступно, можно получить chat_id
+    if update:
+        chat_id = update.effective_chat.id if update.effective_chat else None
+
+        if chat_id:
+            # В случае ошибки завершаем все активные диалоги пользователя
+            logger.info(f"Завершение всех диалогов пользователя {chat_id} из-за ошибки")
+            end_all_conversations(chat_id)
+
+            # Уведомление пользователя о проблеме
+            try:
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text="Произошла ошибка при обработке запроса. Пожалуйста, попробуйте снова.",
+                    reply_markup=MAIN_KEYBOARD
+                )
+            except Exception as e:
+                logger.error(f"Не удалось отправить сообщение об ошибке: {e}")
 
 
 def register(application):
@@ -253,8 +376,15 @@ def register(application):
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("id", get_user_id))
     application.add_handler(CommandHandler("cancel", cancel))
+    application.add_handler(CommandHandler("recent", recent_entries))
 
     # Добавляем обработчик callback-запросов для справки
     application.add_handler(CallbackQueryHandler(handle_help_callback, pattern=f"^{HELP_PREFIX}"))
+
+    # Добавляем обработчик ошибок
+    application.add_error_handler(error_handler)
+
+    # Установка команд меню бота при запуске
+    application.post_init = setup_commands
 
     logger.info("Базовые обработчики зарегистрированы")
