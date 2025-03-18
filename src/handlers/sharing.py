@@ -1,6 +1,7 @@
 """
 Модуль для обработки обмена данными между пользователями.
 Обрабатывает команды для отправки и просмотра дневников.
+Оптимизированная версия для работы с SQLite.
 """
 
 import io
@@ -15,9 +16,10 @@ from telegram.ext import (
 )
 
 from src.utils.keyboards import MAIN_KEYBOARD
-from src.data.storage import get_user_data_file, get_user_entries
-from src.data.encryption import encrypt_for_sharing
+from src.data.storage import get_user_entries, ensure_user_exists
+from src.data.encryption import encrypt_for_sharing, decrypt_shared_data
 from src.utils.conversation_manager import register_conversation, end_conversation, end_all_conversations
+from src.multiprocessing import run_in_process
 
 # Настройка логгирования
 logger = logging.getLogger(__name__)
@@ -37,6 +39,35 @@ VIEW_HANDLER_NAME = "view_shared_handler"
 # Глобальные объекты для хранения ссылок на обработчики
 send_conversation_handler = None
 view_shared_handler = None
+
+
+# Используем декоратор run_in_process для тяжелой операции шифрования
+@run_in_process(timeout=30)
+def prepare_shared_data_package(entries, chat_id, sharing_password):
+    """
+    Подготавливает пакет зашифрованных данных для отправки.
+    Выполняется в отдельном процессе для снижения нагрузки.
+
+    Args:
+        entries: отфильтрованные записи для отправки
+        chat_id: ID отправителя
+        sharing_password: пароль для шифрования
+
+    Returns:
+        bytes: JSON-данные пакета в байтовом формате
+    """
+    # Шифрование данных с одноразовым паролем
+    encrypted_for_sharing = encrypt_for_sharing(entries, sharing_password)
+
+    # Создание пользовательского формата для зашифрованного файла
+    encrypted_package = {
+        'encrypted_data': encrypted_for_sharing,
+        'sender_id': chat_id,
+        'format_version': '1.0'
+    }
+
+    # Преобразование в JSON, затем в байты
+    return json.dumps(encrypted_package).encode('utf-8')
 
 
 async def custom_cancel_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -97,7 +128,7 @@ async def send_diary_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"Пользователь {chat_id} начал процесс отправки дневника")
 
-    # Проверка наличия записей у пользователя
+    # Проверка наличия записей у пользователя через оптимизированный API
     entries = get_user_entries(chat_id)
 
     if not entries:
@@ -210,24 +241,34 @@ async def process_date_range(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
     context.user_data['sharing_password'] = sharing_password
 
-    # Получение записей пользователя
-    entries = get_user_entries(chat_id)
+    # Отправка статусного сообщения
+    status_message = await query.message.edit_text(
+        "Подготовка данных и шифрование...\nЭто может занять несколько секунд."
+    )
 
-    if not entries:
-        await query.message.reply_text(
+    # Получение записей пользователя через оптимизированный API
+    all_entries = get_user_entries(chat_id)
+
+    if not all_entries:
+        await status_message.edit_text(
             "Не удалось получить или расшифровать записи.",
+            reply_markup=None
+        )
+        await query.message.reply_text(
+            "Произошла ошибка при подготовке данных.",
             reply_markup=MAIN_KEYBOARD
         )
         return ConversationHandler.END
 
-    # Обработка диапазона дат
-    date_range = context.user_data['selected_date_range']
-
-    # Преобразование в DataFrame для фильтрации
-    import pandas as pd
-    entries_df = pd.DataFrame(entries)
-
     try:
+        # Обработка диапазона дат
+        date_range = context.user_data['selected_date_range']
+
+        # Преобразование в DataFrame для фильтрации
+        import pandas as pd
+        entries_df = pd.DataFrame(all_entries)
+
+        # Фильтрация по датам
         if date_range == "date_range_all":
             # Использовать все данные
             filtered_df = entries_df
@@ -236,21 +277,13 @@ async def process_date_range(update: Update, context: ContextTypes.DEFAULT_TYPE)
             # Проверка формата строки date_range
             if not date_range.startswith("date_range_"):
                 logger.error(f"Неверный формат диапазона дат: {date_range}")
-                await query.message.reply_text(
-                    "Произошла ошибка при обработке диапазона дат.",
-                    reply_markup=MAIN_KEYBOARD
-                )
-                return ConversationHandler.END
+                raise ValueError("Неверный формат диапазона дат")
 
             # Извлечение дат из данных обратного вызова
             parts = date_range.split('_')
             if len(parts) < 3:
                 logger.error(f"Недостаточно частей в строке диапазона: {date_range}")
-                await query.message.reply_text(
-                    "Произошла ошибка при обработке диапазона дат.",
-                    reply_markup=MAIN_KEYBOARD
-                )
-                return ConversationHandler.END
+                raise ValueError("Недостаточно частей в строке диапазона")
 
             # Извлекаем даты, учитывая, что после разделения могут быть дополнительные части
             start_date = parts[2]
@@ -278,64 +311,91 @@ async def process_date_range(update: Update, context: ContextTypes.DEFAULT_TYPE)
             else:
                 logger.warning("Колонка 'date' не найдена в данных")
                 filtered_df = entries_df
+
+        if len(filtered_df) == 0:
+            await status_message.edit_text(
+                "За выбранный период нет данных для отправки.",
+                reply_markup=None
+            )
+            await query.message.reply_text(
+                "Выберите другой период или добавьте записи.",
+                reply_markup=MAIN_KEYBOARD
+            )
+            return ConversationHandler.END
+
+        # Обновляем статусное сообщение
+        await status_message.edit_text(
+            "Шифрование данных и подготовка пакета для отправки..."
+        )
+
+        # Получаем отфильтрованные записи в виде списка словарей
+        filtered_entries = filtered_df.to_dict('records')
+
+        # Подготавливаем пакет данных в отдельном процессе (тяжелая операция)
+        encrypted_bytes_data = await context.application.loop.run_in_executor(
+            None, lambda: prepare_shared_data_package(filtered_entries, chat_id, sharing_password)
+        )
+
+        # Преобразование в BytesIO для отправки
+        encrypted_bytes = io.BytesIO(encrypted_bytes_data)
+        encrypted_bytes.seek(0)
+
+        # Обновляем статусное сообщение
+        await status_message.edit_text(
+            "Отправка зашифрованного пакета получателю..."
+        )
+
+        try:
+            # Получение информации об отправителе
+            sender_info = ""
+            if query.from_user.username:
+                sender_info = f" от @{query.from_user.username}"
+            elif query.from_user.first_name:
+                sender_info = f" от {query.from_user.first_name}"
+
+            # Отправка зашифрованного файла получателю
+            await context.bot.send_document(
+                chat_id=recipient_id,
+                document=encrypted_bytes,
+                filename="shared_encrypted_diary.json",
+                caption=f"Зашифрованный дневник настроения{sender_info}. Для просмотра используйте команду /view_shared."
+            )
+
+            # Обновляем статусное сообщение
+            await status_message.edit_text(
+                f"Дневник успешно отправлен пользователю {recipient_id}!"
+            )
+
+            await query.message.reply_text(
+                f"Сообщите получателю пароль '{sharing_password}' для доступа к данным. "
+                f"Этот пароль будет нужен получателю при использовании команды /view_shared.",
+                reply_markup=MAIN_KEYBOARD
+            )
+            logger.info(f"Пользователь {chat_id} успешно отправил дневник пользователю {recipient_id}")
+        except Exception as e:
+            logger.error(f"Ошибка при отправке дневника: {str(e)}")
+
+            await status_message.edit_text(
+                "Ошибка при отправке дневника."
+            )
+
+            await query.message.reply_text(
+                f"Не удалось отправить дневник. Возможно, указан неверный ID пользователя или пользователь заблокировал бота.\n\nОшибка: {str(e)}",
+                reply_markup=MAIN_KEYBOARD
+            )
+
     except Exception as e:
-        logger.error(f"Ошибка при фильтрации данных: {e}")
-        await query.message.reply_text(
-            f"Произошла ошибка при фильтрации данных: {str(e)}",
-            reply_markup=MAIN_KEYBOARD
-        )
-        return ConversationHandler.END
+        logger.error(f"Ошибка при подготовке данных для отправки: {str(e)}")
 
-    if len(filtered_df) == 0:
-        await query.message.reply_text(
-            "За выбранный период нет данных для отправки.",
-            reply_markup=MAIN_KEYBOARD
-        )
-        return ConversationHandler.END
-
-    # Повторная шифровка отфильтрованных данных с одноразовым паролем для получателя
-    all_entries = filtered_df.to_dict('records')
-    encrypted_for_sharing = encrypt_for_sharing(all_entries, sharing_password)
-
-    # Создание пользовательского формата для зашифрованного файла
-    encrypted_package = {
-        'encrypted_data': encrypted_for_sharing,
-        'sender_id': chat_id,
-        'format_version': '1.0'
-    }
-
-    # Преобразование в JSON, затем в байты
-    encrypted_bytes = io.BytesIO()
-    encrypted_bytes.write(json.dumps(encrypted_package).encode('utf-8'))
-    encrypted_bytes.seek(0)
-
-    try:
-        # Получение информации об отправителе
-        sender_info = ""
-        if query.from_user.username:
-            sender_info = f" от @{query.from_user.username}"
-        elif query.from_user.first_name:
-            sender_info = f" от {query.from_user.first_name}"
-
-        # Отправка зашифрованного файла получателю
-        await context.bot.send_document(
-            chat_id=recipient_id,
-            document=encrypted_bytes,
-            filename="shared_encrypted_diary.json",
-            caption=f"Зашифрованный дневник настроения{sender_info}. Для просмотра используйте команду /view_shared."
-        )
+        try:
+            await status_message.edit_text(
+                "Произошла ошибка при подготовке данных для отправки."
+            )
+        except:
+            pass
 
         await query.message.reply_text(
-            f"Дневник успешно отправлен указанному пользователю!\n\n"
-            f"Сообщите получателю пароль '{sharing_password}' для доступа к данным. "
-            f"Этот пароль будет нужен получателю при использовании команды /view_shared.",
-            reply_markup=MAIN_KEYBOARD
-        )
-        logger.info(f"Пользователь {chat_id} успешно отправил дневник пользователю {recipient_id}")
-    except Exception as e:
-        logger.error(f"Ошибка при отправке дневника: {str(e)}")
-        await query.message.reply_text(
-            f"Не удалось отправить дневник. Возможно, указан неверный ID пользователя или пользователь заблокировал бота.\n\nОшибка: {str(e)}",
+            f"Произошла ошибка при обработке данных: {str(e)}",
             reply_markup=MAIN_KEYBOARD
         )
 
@@ -355,6 +415,9 @@ async def view_shared_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     register_conversation(chat_id, VIEW_HANDLER_NAME, SHARE_PASSWORD_ENTRY)
 
     logger.info(f"Пользователь {chat_id} начал процесс просмотра полученного дневника")
+
+    # Обеспечиваем наличие пользователя в базе данных
+    ensure_user_exists(chat_id, update.effective_user.username, update.effective_user.first_name)
 
     # Запрос пересылки файла дневника
     await update.message.reply_text(
@@ -381,6 +444,8 @@ async def process_shared_password(update: Update, context: ContextTypes.DEFAULT_
 
     logger.info(f"Пользователь {chat_id} ввел пароль для расшифровки дневника")
 
+    # В полной реализации здесь будет расшифровка и отображение общего дневника
+    # Для этого примера просто показываем сообщение
     await update.message.reply_text(
         "Функция просмотра общих дневников требует обработки загруженных файлов, "
         "что выходит за рамки этого примера. В полной реализации здесь будет "

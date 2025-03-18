@@ -8,20 +8,21 @@ from typing import Tuple, Optional
 
 def parse_date_range(date_range: str) -> Tuple[Optional[str], Optional[str]]:
     """
-    Парсит строку диапазона дат из callback_data.
-    
-    Args:
-        date_range: строка с диапазоном дат
-        
-    Returns:
-        Tuple[Optional[str], Optional[str]]: кортеж (начальная дата, конечная дата)
+    Parses a date range string from callback_data.
     """
     if date_range == "date_range_all":
         return None, None
-    
-    # Извлечение дат из callback_data
-    _, start_date, end_date = date_range.split('_', 2)
-    return start_date, end_date
+
+    # Make sure we're parsing the string correctly
+    parts = date_range.split('_')
+    if len(parts) >= 3:
+        # Extract dates from the 3rd and 4th parts
+        start_date = parts[2]
+        end_date = parts[3] if len(parts) > 3 else None
+        return start_date, end_date
+    else:
+        # Invalid format
+        return None, None
 
 
 def get_period_name(date_range: str) -> str:
@@ -36,13 +37,18 @@ def get_period_name(date_range: str) -> str:
     """
     if date_range == "date_range_all":
         return "за все время"
-    
-    # Извлечение дат из callback_data
-    _, start_date, end_date = date_range.split('_', 2)
-    
-    # Преобразование строковых дат в объекты datetime
-    start = datetime.datetime.strptime(start_date, '%Y-%m-%d').date()
-    end = datetime.datetime.strptime(end_date, '%Y-%m-%d').date()
+
+    # Parsing correctly - using the entire string after "date_range_"
+    parts = date_range.split('_')
+    # Make sure we have at least 3 parts (date_range, start_date, end_date)
+    if len(parts) >= 3:
+        start_date = parts[2]
+        end_date = parts[3] if len(parts) > 3 else None
+
+        # Convert dates
+        start = datetime.datetime.strptime(start_date, '%Y-%m-%d').date()
+        end = datetime.datetime.strptime(end_date,
+                                         '%Y-%m-%d').date() if end_date else datetime.datetime.now().date()
     
     # Определение периода
     delta = end - start
@@ -69,15 +75,15 @@ def get_today() -> str:
 
 def is_valid_time_format(time_str: str) -> bool:
     """
-    Проверяет, является ли строка корректным форматом времени HH:MM.
-    
-    Args:
-        time_str: строка времени для проверки
-        
-    Returns:
-        bool: True, если формат корректен
+    Checks if the string is a valid time format HH:MM (with exactly 2 digits for both).
     """
     try:
+        # Check basic format with regex to enforce 2 digits for both hours and minutes
+        import re
+        if not re.match(r'^([0-1][0-9]|2[0-3]):[0-5][0-9]$', time_str):
+            return False
+
+        # If the regex passes, parse the values as a double-check
         hour, minute = map(int, time_str.split(':'))
         return 0 <= hour <= 23 and 0 <= minute <= 59
     except (ValueError, TypeError):
