@@ -1,3 +1,5 @@
+version: '3'
+
 services:
   mind-vue-bot:
     build: .
@@ -6,10 +8,27 @@ services:
       - ./:/app
       # Mount a separate volume for user data
       - ./user_data:/app/user_data
+      - ./visualization_cache:/app/visualization_cache
     environment:
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      # Добавляем переменные для оптимизации Python
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - PYTHONHASHSEED=random
+    # Ограничиваем использование CPU и памяти
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'  # Ограничение до 1.5 ядер CPU
+          memory: 1G   # Ограничение памяти
     # Keep the container running
     tty: true
     stdin_open: true
-    # Restart if something goes wrong
+    # Restart policy
     restart: unless-stopped
+    # Установка healthcheck
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/getMe')"]
+      interval: 60s
+      timeout: 10s
+      retries: 3

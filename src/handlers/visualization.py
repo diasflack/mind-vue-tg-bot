@@ -1,6 +1,7 @@
 """
 Модуль с обработчиками для визуализации данных.
 Обрабатывает команды для создания и отображения графиков.
+Исправленная версия для работы с оптимизированными функциями визуализации.
 """
 
 import logging
@@ -286,11 +287,13 @@ async def generate_time_series_chart(message, chat_id: int, metric: str):
         columns = [metric]
 
     try:
-        # Создание графика
-        chart_buffer = create_time_series_chart(entries, columns)
+        # Отправка статусного сообщения
+        await message.edit_text("Генерация графика...")
+
+        # Создание графика (передаем chat_id для кеширования)
+        chart_buffer = create_time_series_chart(entries, columns, chat_id)
 
         # Отправка графика пользователю
-        await message.edit_text("Генерация графика...")
         await message.reply_photo(
             photo=chart_buffer,
             caption=f"График динамики показателей",
@@ -328,8 +331,11 @@ async def generate_distribution_chart(message, chat_id: int, metric: str):
         return
 
     try:
+        # Отправка статусного сообщения
+        await message.edit_text("Генерация графика...")
+
         # Создание графика распределения
-        chart_buffer = create_mood_distribution(entries, metric)
+        chart_buffer = create_mood_distribution(entries, metric, chat_id)
 
         if chart_buffer is None:
             await message.edit_text(
@@ -339,7 +345,6 @@ async def generate_distribution_chart(message, chat_id: int, metric: str):
             return
 
         # Отправка графика пользователю
-        await message.edit_text("Генерация графика...")
         await message.reply_photo(
             photo=chart_buffer,
             caption=f"Распределение показателя {get_column_name(metric)}",
@@ -388,12 +393,11 @@ async def generate_correlation_chart(message, chat_id: int):
                'anxiety', 'irritability', 'productivity', 'sociability']
 
     try:
-        # Instead of editing the message text, which requires an inline keyboard,
-        # let's first reply with a temporary status message
+        # Отправка статусного сообщения
         status_message = await message.reply_text("Генерация матрицы корреляции...")
 
-        # Create the correlation matrix
-        chart_buffer = create_correlation_matrix(entries, columns)
+        # Create the correlation matrix (передаем chat_id для кеширования)
+        chart_buffer = create_correlation_matrix(entries, columns, chat_id)
 
         # Send the chart as a new message
         await message.reply_photo(
@@ -449,8 +453,11 @@ async def generate_calendar_chart(message, chat_id: int, metric: str, year: int,
         return
 
     try:
-        # Создание календаря настроения
-        chart_buffer = create_monthly_heatmap(entries, year, month, metric)
+        # Отправка статусного сообщения
+        await message.edit_text("Генерация календаря настроения...")
+
+        # Создание календаря настроения (передаем chat_id для кеширования)
+        chart_buffer = create_monthly_heatmap(entries, year, month, metric, chat_id)
 
         if chart_buffer is None:
             await message.edit_text(
@@ -460,7 +467,6 @@ async def generate_calendar_chart(message, chat_id: int, metric: str, year: int,
             return
 
         # Отправка графика пользователю
-        await message.edit_text("Генерация календаря настроения...")
         await message.reply_photo(
             photo=chart_buffer,
             caption=f"Календарь показателя {get_column_name(metric)} за {month}/{year}",

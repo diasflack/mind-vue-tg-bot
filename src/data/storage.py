@@ -1,52 +1,258 @@
 """
 Модуль для работы с хранилищем данных.
 Обеспечивает сохранение и загрузку данных пользователей.
+Оптимизированная версия с использованием SQLite и кешированием.
 """
 
 import os
 import logging
-from typing import Dict, List, Any, Optional, Union
+import sqlite3
+import json
+import threading
+from typing import Dict, List, Any, Optional, Union, Tuple
 import pandas as pd
+from datetime import datetime, timedelta
 
-from src.config import DATA_FOLDER, USERS_FILE
+from src.config import DATA_FOLDER
 from src.data.encryption import encrypt_data, decrypt_data
 
 # Настройка логгирования
 logger = logging.getLogger(__name__)
 
+# Пути к файлам БД
+DB_FILE = os.path.join(DATA_FOLDER, "mood_tracker.db")
 
-def initialize_files():
-    """
-    Инициализирует файлы данных и директории, если они не существуют.
-    """
-    # Создание папки для данных пользователей, если она не существует
-    if not os.path.exists(DATA_FOLDER):
-        os.makedirs(DATA_FOLDER)
-        logger.info(f"Создана директория для данных пользователей: {DATA_FOLDER}")
-    
-    # Создание файла пользователей, если он не существует
-    if not os.path.exists(USERS_FILE):
-        columns = ['chat_id', 'username', 'first_name', 'notification_time']
-        pd.DataFrame(columns=columns).to_csv(USERS_FILE, index=False)
-        logger.info(f"Создан файл пользователей: {USERS_FILE}")
+# Размер кеша записей пользователя (максимальное количество наборов данных в кеше)
+MAX_CACHE_SIZE = 5
+
+# Время жизни кеша в секундах (30 минут)
+CACHE_TTL = 1800
+
+# Кеш для данных пользователей
+# Структура: {chat_id: {"data": list_of_entries, "timestamp": datetime, "modified": bool}}
+_entries_cache = {}
+_cache_lock = threading.RLock()
+
+# Соединение с базой данных (инициализируется при первом использовании)
+_db_connection = None
+_db_lock = threading.RLock()
 
 
-def get_user_data_file(chat_id: int) -> str:
+def _get_db_connection() -> sqlite3.Connection:
     """
-    Возвращает путь к файлу с данными конкретного пользователя.
-    
+    Получает соединение с базой данных SQLite.
+    Инициализирует базу при первом вызове.
+
+    Returns:
+        sqlite3.Connection: соединение с базой данных
+    """
+    global _db_connection
+
+    with _db_lock:
+        if _db_connection is None:
+            # Создаем директорию для данных, если её нет
+            if not os.path.exists(DATA_FOLDER):
+                os.makedirs(DATA_FOLDER)
+                logger.info(f"Создана директория для данных: {DATA_FOLDER}")
+
+            # Инициализируем соединение
+            _db_connection = sqlite3.connect(DB_FILE, check_same_thread=False)
+
+            # Включаем поддержку внешних ключей
+            _db_connection.execute("PRAGMA foreign_keys = ON")
+
+            # Инициализируем таблицы, если их нет
+            _initialize_db(_db_connection)
+
+            logger.info(f"Соединение с базой данных инициализировано: {DB_FILE}")
+
+        return _db_connection
+
+
+def _initialize_db(conn: sqlite3.Connection) -> None:
+    """
+    Инициализирует таблицы базы данных, если они не существуют.
+
+    Args:
+        conn: соединение с базой данных
+    """
+    # Создание таблицы пользователей
+    conn.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        chat_id INTEGER PRIMARY KEY,
+        username TEXT,
+        first_name TEXT,
+        notification_time TEXT
+    )
+    ''')
+
+    # Создание таблицы записей
+    conn.execute('''
+    CREATE TABLE IF NOT EXISTS entries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id INTEGER NOT NULL,
+        date TEXT NOT NULL,
+        encrypted_data TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (chat_id) REFERENCES users(chat_id),
+        UNIQUE(chat_id, date)
+    )
+    ''')
+
+    # Создание индексов для ускорения запросов
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_entries_chat_id ON entries(chat_id)')
+    conn.execute('CREATE INDEX IF NOT EXISTS idx_entries_date ON entries(date)')
+
+    # Фиксация изменений
+    conn.commit()
+
+
+def _migrate_csv_to_sqlite() -> None:
+    """
+    Мигрирует данные из CSV-файлов в SQLite.
+    Выполняется при первом запуске после обновления.
+    """
+    conn = _get_db_connection()
+    cursor = conn.cursor()
+
+    # Получение списка CSV-файлов пользователей
+    csv_files = [f for f in os.listdir(DATA_FOLDER) if f.startswith('user_') and f.endswith('_data.csv')]
+
+    for csv_file in csv_files:
+        try:
+            # Извлечение chat_id из имени файла
+            chat_id = int(csv_file.split('_')[1])
+
+            # Проверка, есть ли уже записи для этого пользователя в БД
+            cursor.execute("SELECT COUNT(*) FROM entries WHERE chat_id = ?", (chat_id,))
+            if cursor.fetchone()[0] > 0:
+                logger.info(f"Записи пользователя {chat_id} уже мигрированы в SQLite")
+                continue
+
+            # Чтение CSV-файла
+            csv_path = os.path.join(DATA_FOLDER, csv_file)
+            df = pd.read_csv(csv_path)
+
+            # Миграция каждой записи
+            for _, row in df.iterrows():
+                date = row['date']
+                encrypted_data = row['encrypted_data']
+
+                # Добавление записи в SQLite
+                cursor.execute(
+                    "INSERT OR IGNORE INTO entries (chat_id, date, encrypted_data) VALUES (?, ?, ?)",
+                    (chat_id, date, encrypted_data)
+                )
+
+            conn.commit()
+            logger.info(f"Мигрировано {len(df)} записей пользователя {chat_id} из CSV в SQLite")
+
+            # Создаем резервную копию CSV-файла перед миграцией
+            backup_path = csv_path + '.bak'
+            os.rename(csv_path, backup_path)
+            logger.info(f"Создана резервная копия CSV-файла: {backup_path}")
+
+        except Exception as e:
+            logger.error(f"Ошибка при миграции CSV-файла {csv_file}: {e}")
+            conn.rollback()
+
+    logger.info("Миграция данных из CSV в SQLite завершена")
+
+
+def initialize_storage():
+    """
+    Инициализирует хранилище данных.
+    Создает базу данных, если она не существует, и мигрирует данные из CSV.
+    """
+    # Инициализация базы данных
+    conn = _get_db_connection()
+
+    # Миграция данных из CSV, если нужно
+    _migrate_csv_to_sqlite()
+
+    logger.info("Хранилище данных инициализировано")
+
+
+def _cleanup_cache():
+    """
+    Очищает устаревшие данные из кеша.
+    """
+    now = datetime.now()
+    expired_keys = []
+
+    with _cache_lock:
+        # Находим устаревшие ключи
+        for chat_id, cache_data in _entries_cache.items():
+            if now - cache_data["timestamp"] > timedelta(seconds=CACHE_TTL):
+                # Если данные были изменены, сохраняем их перед удалением
+                if cache_data.get("modified", False):
+                    _flush_cache_to_db(chat_id)
+                expired_keys.append(chat_id)
+
+        # Удаляем устаревшие ключи
+        for chat_id in expired_keys:
+            del _entries_cache[chat_id]
+
+    if expired_keys:
+        logger.debug(f"Очищено {len(expired_keys)} устаревших наборов данных из кеша")
+
+
+def _flush_cache_to_db(chat_id: int) -> None:
+    """
+    Сохраняет кешированные данные в базу данных.
+
     Args:
         chat_id: ID пользователя в Telegram
-        
-    Returns:
-        str: путь к файлу данных пользователя
     """
-    return os.path.join(DATA_FOLDER, f"user_{chat_id}_data.csv")
+    with _cache_lock:
+        if chat_id not in _entries_cache or not _entries_cache[chat_id].get("modified", False):
+            return
+
+        entries = _entries_cache[chat_id]["data"]
+
+        # Нет изменений для сохранения
+        if not entries:
+            _entries_cache[chat_id]["modified"] = False
+            return
+
+        conn = _get_db_connection()
+        cursor = conn.cursor()
+
+        try:
+            # Начинаем транзакцию
+            cursor.execute("BEGIN")
+
+            # Обновляем каждую запись
+            for entry in entries:
+                date = entry['date']
+
+                # Шифрование данных
+                encrypted_data = encrypt_data(entry, chat_id)
+
+                # Обновление или вставка записи (UPSERT)
+                cursor.execute("""
+                    INSERT INTO entries (chat_id, date, encrypted_data)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(chat_id, date)
+                    DO UPDATE SET encrypted_data = excluded.encrypted_data
+                """, (chat_id, date, encrypted_data))
+
+            # Фиксируем транзакцию
+            conn.commit()
+
+            # Обновляем статус кеша
+            _entries_cache[chat_id]["modified"] = False
+            logger.debug(f"Данные пользователя {chat_id} сохранены в БД")
+
+        except Exception as e:
+            # Откатываем транзакцию в случае ошибки
+            conn.rollback()
+            logger.error(f"Ошибка при сохранении данных пользователя {chat_id}: {e}")
 
 
 def save_data(data: Dict[str, Any], chat_id: int) -> bool:
     """
-    Сохраняет зашифрованные данные в файл пользователя.
+    Сохраняет данные в кеш и периодически сохраняет их в базу данных.
     Если запись с такой датой уже существует, она будет перезаписана.
 
     Args:
@@ -56,50 +262,50 @@ def save_data(data: Dict[str, Any], chat_id: int) -> bool:
     Returns:
         bool: True, если данные успешно сохранены
     """
-    user_file = get_user_data_file(chat_id)
-    logger.info(f"Сохранение данных для пользователя {chat_id} в файл {user_file}")
+    logger.debug(f"Сохранение данных для пользователя {chat_id}")
 
     try:
-        # Шифрование данных с использованием Telegram ID пользователя
-        encrypted_data = encrypt_data(data, chat_id)
-        logger.debug(f"Данные успешно зашифрованы")
+        # Обновление кеша
+        with _cache_lock:
+            # Чистим устаревшие кеши перед добавлением новых данных
+            _cleanup_cache()
 
-        # Преобразование в формат, совместимый с dataframe
-        row_data = {
-            'date': data['date'],  # Дата не шифруется для возможности фильтрации
-            'encrypted_data': encrypted_data
-        }
+            if chat_id in _entries_cache:
+                entries = _entries_cache[chat_id]["data"]
 
-        if os.path.exists(user_file):
-            logger.debug(f"Файл {user_file} существует, проверяем наличие записи на эту дату")
-            # Чтение существующего файла
-            df = pd.read_csv(user_file)
+                # Проверяем наличие записи с той же датой и обновляем её
+                for i, entry in enumerate(entries):
+                    if entry['date'] == data['date']:
+                        entries[i] = data
+                        break
+                else:
+                    # Если записи с такой датой нет, добавляем новую
+                    entries.append(data)
 
-            # Проверка на наличие записи с такой же датой
-            if data['date'] in df['date'].values:
-                logger.info(f"Найдена существующая запись на дату {data['date']}, она будет перезаписана")
-                # Удаление старой записи
-                df = df[df['date'] != data['date']]
+                # Помечаем кеш как измененный
+                _entries_cache[chat_id]["modified"] = True
+                # Обновляем временную метку
+                _entries_cache[chat_id]["timestamp"] = datetime.now()
+            else:
+                # Создаем новый кеш для пользователя
+                _entries_cache[chat_id] = {
+                    "data": [data],
+                    "timestamp": datetime.now(),
+                    "modified": True
+                }
 
-            # Добавление новой записи
-            df = pd.concat([df, pd.DataFrame([row_data])], ignore_index=True)
-            df.to_csv(user_file, index=False)
-            logger.debug(f"Всего записей в файле после добавления: {len(df)}")
-        else:
-            logger.debug(f"Файл {user_file} не существует, создаем новый файл")
-            # Создание нового DataFrame с текущими данными
-            df = pd.DataFrame([row_data])
-            df.to_csv(user_file, index=False)
-            logger.debug(f"Создан новый файл с 1 записью")
+            # Если размер кеша превышает лимит, сохраняем данные в БД
+            if len(_entries_cache) > MAX_CACHE_SIZE:
+                _flush_cache_to_db(chat_id)
 
-        # Проверка, что файл действительно существует после сохранения
-        if os.path.exists(user_file):
-            file_size = os.path.getsize(user_file)
-            logger.info(f"Данные успешно сохранены для пользователя {chat_id}. Размер файла: {file_size} байт")
-            return True
-        else:
-            logger.error(f"Файл {user_file} не был создан после попытки сохранения")
-            return False
+        # Обеспечиваем наличие пользователя в базе данных
+        ensure_user_exists(chat_id)
+
+        # Немедленное сохранение в БД для важных данных
+        _flush_cache_to_db(chat_id)
+
+        logger.info(f"Данные успешно сохранены для пользователя {chat_id}")
+        return True
 
     except Exception as e:
         logger.error(f"Ошибка при сохранении данных для пользователя {chat_id}: {e}")
@@ -109,6 +315,7 @@ def save_data(data: Dict[str, Any], chat_id: int) -> bool:
 def get_user_entries(chat_id: int, start_date: Optional[str] = None, end_date: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Получает расшифрованные записи пользователя с фильтрацией по датам.
+    Использует кеширование для повышения производительности.
 
     Args:
         chat_id: ID пользователя в Telegram
@@ -118,40 +325,68 @@ def get_user_entries(chat_id: int, start_date: Optional[str] = None, end_date: O
     Returns:
         List[Dict[str, Any]]: список расшифрованных записей
     """
-    user_file = get_user_data_file(chat_id)
+    logger.debug(f"Получение записей пользователя {chat_id}")
 
-    if not os.path.exists(user_file):
-        logger.info(f"Файл данных для пользователя {chat_id} не найден")
-        return []
+    # Проверяем наличие данных в кеше
+    with _cache_lock:
+        if chat_id in _entries_cache:
+            # Данные есть в кеше
+            cached_entries = _entries_cache[chat_id]["data"]
+
+            # Если кеш был изменен, но данные не фильтруются, мы можем вернуть кеш
+            if not start_date and not end_date:
+                # Обновляем временную метку
+                _entries_cache[chat_id]["timestamp"] = datetime.now()
+                logger.debug(f"Возвращено {len(cached_entries)} записей из кеша для пользователя {chat_id}")
+                return cached_entries.copy()
 
     try:
-        df = pd.read_csv(user_file)
+        conn = _get_db_connection()
+        cursor = conn.cursor()
 
-        if len(df) == 0:
-            logger.info(f"У пользователя {chat_id} нет записей")
-            return []
+        # Формирование запроса с учетом фильтров
+        query = "SELECT date, encrypted_data FROM entries WHERE chat_id = ?"
+        params = [chat_id]
 
-        # Фильтрация по датам, если указаны
-        if start_date and 'date' in df.columns:
-            df = df[df['date'] >= start_date]
+        if start_date:
+            query += " AND date >= ?"
+            params.append(start_date)
 
-        if end_date and 'date' in df.columns:
-            df = df[df['date'] <= end_date]
+        if end_date:
+            query += " AND date <= ?"
+            params.append(end_date)
 
-        # Расшифровка всех записей
+        # Добавляем сортировку по дате
+        query += " ORDER BY date DESC"
+
+        # Выполнение запроса
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+
+        # Расшифровка записей
         decrypted_entries = []
-        for _, row in df.iterrows():
+        for date, encrypted_data in rows:
             try:
-                entry = decrypt_data(row['encrypted_data'], chat_id)
+                entry = decrypt_data(encrypted_data, chat_id)
                 if entry:
                     decrypted_entries.append(entry)
                 else:
-                    logger.warning(f"Не удалось расшифровать запись для пользователя {chat_id}")
+                    logger.warning(f"Не удалось расшифровать запись за {date} для пользователя {chat_id}")
             except Exception as e:
-                logger.error(f"Ошибка при расшифровке записи: {e}")
+                logger.error(f"Ошибка при расшифровке записи за {date}: {e}")
+
+        # Если не было фильтрации, обновляем кеш
+        if not start_date and not end_date:
+            with _cache_lock:
+                _entries_cache[chat_id] = {
+                    "data": decrypted_entries.copy(),
+                    "timestamp": datetime.now(),
+                    "modified": False
+                }
 
         logger.info(f"Успешно получено {len(decrypted_entries)} записей для пользователя {chat_id}")
         return decrypted_entries
+
     except Exception as e:
         logger.error(f"Ошибка при получении записей для пользователя {chat_id}: {e}")
         return []
@@ -167,22 +402,28 @@ def delete_all_entries(chat_id: int) -> bool:
     Returns:
         bool: True, если данные успешно удалены
     """
-    user_file = get_user_data_file(chat_id)
-
-    if not os.path.exists(user_file):
-        logger.info(f"Файл данных для пользователя {chat_id} не найден")
-        return False
+    logger.info(f"Удаление всех записей пользователя {chat_id}")
 
     try:
-        # Создаем пустой DataFrame с теми же колонками
-        df = pd.read_csv(user_file)
-        empty_df = pd.DataFrame(columns=df.columns)
-        empty_df.to_csv(user_file, index=False)
+        # Очистка кеша пользователя
+        with _cache_lock:
+            if chat_id in _entries_cache:
+                del _entries_cache[chat_id]
 
-        logger.info(f"Все записи для пользователя {chat_id} успешно удалены")
+        # Удаление записей из БД
+        conn = _get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("DELETE FROM entries WHERE chat_id = ?", (chat_id,))
+        conn.commit()
+
+        rows_deleted = cursor.rowcount
+        logger.info(f"Удалено {rows_deleted} записей пользователя {chat_id}")
+
         return True
+
     except Exception as e:
-        logger.error(f"Ошибка при удалении данных для пользователя {chat_id}: {e}")
+        logger.error(f"Ошибка при удалении записей пользователя {chat_id}: {e}")
         return False
 
 
@@ -197,27 +438,36 @@ def delete_entry_by_date(chat_id: int, date: str) -> bool:
     Returns:
         bool: True, если запись успешно удалена
     """
-    user_file = get_user_data_file(chat_id)
-
-    if not os.path.exists(user_file):
-        logger.info(f"Файл данных для пользователя {chat_id} не найден")
-        return False
+    logger.info(f"Удаление записи за {date} пользователя {chat_id}")
 
     try:
-        df = pd.read_csv(user_file)
+        # Обновление кеша (если есть)
+        with _cache_lock:
+            if chat_id in _entries_cache:
+                entries = _entries_cache[chat_id]["data"]
+                # Удаляем запись из кеша
+                _entries_cache[chat_id]["data"] = [e for e in entries if e['date'] != date]
+                _entries_cache[chat_id]["modified"] = True
+                _entries_cache[chat_id]["timestamp"] = datetime.now()
 
-        if date not in df['date'].values:
-            logger.info(f"Запись на дату {date} для пользователя {chat_id} не найдена")
-            return False
+        # Удаление записи из БД
+        conn = _get_db_connection()
+        cursor = conn.cursor()
 
-        # Удаляем запись с указанной датой
-        df = df[df['date'] != date]
-        df.to_csv(user_file, index=False)
+        cursor.execute("DELETE FROM entries WHERE chat_id = ? AND date = ?", (chat_id, date))
+        conn.commit()
 
-        logger.info(f"Запись на дату {date} для пользователя {chat_id} успешно удалена")
-        return True
+        success = cursor.rowcount > 0
+
+        if success:
+            logger.info(f"Запись за {date} пользователя {chat_id} успешно удалена")
+        else:
+            logger.info(f"Запись за {date} пользователя {chat_id} не найдена")
+
+        return success
+
     except Exception as e:
-        logger.error(f"Ошибка при удалении записи на дату {date} для пользователя {chat_id}: {e}")
+        logger.error(f"Ошибка при удалении записи за {date} пользователя {chat_id}: {e}")
         return False
 
 
@@ -232,17 +482,70 @@ def has_entry_for_date(chat_id: int, date: str) -> bool:
     Returns:
         bool: True, если запись существует
     """
-    user_file = get_user_data_file(chat_id)
-
-    if not os.path.exists(user_file):
-        return False
+    # Проверка в кеше
+    with _cache_lock:
+        if chat_id in _entries_cache:
+            for entry in _entries_cache[chat_id]["data"]:
+                if entry['date'] == date:
+                    return True
 
     try:
-        df = pd.read_csv(user_file)
-        return date in df['date'].values
+        conn = _get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT 1 FROM entries WHERE chat_id = ? AND date = ? LIMIT 1", (chat_id, date))
+        result = cursor.fetchone() is not None
+
+        return result
+
     except Exception as e:
-        logger.error(f"Ошибка при проверке записи на дату {date} для пользователя {chat_id}: {e}")
+        logger.error(f"Ошибка при проверке записи за {date} пользователя {chat_id}: {e}")
         return False
+
+
+def ensure_user_exists(chat_id: int, username: Optional[str] = None, first_name: Optional[str] = None) -> None:
+    """
+    Убеждается, что пользователь существует в базе данных.
+    Если нет - создаёт запись пользователя.
+
+    Args:
+        chat_id: ID пользователя в Telegram
+        username: имя пользователя (опционально)
+        first_name: имя (опционально)
+    """
+    conn = _get_db_connection()
+    cursor = conn.cursor()
+
+    # Проверяем наличие пользователя
+    cursor.execute("SELECT 1 FROM users WHERE chat_id = ?", (chat_id,))
+    if cursor.fetchone() is None:
+        # Добавляем пользователя
+        cursor.execute(
+            "INSERT INTO users (chat_id, username, first_name) VALUES (?, ?, ?)",
+            (chat_id, username, first_name)
+        )
+        conn.commit()
+        logger.info(f"Создан новый пользователь с ID {chat_id}")
+    elif username is not None or first_name is not None:
+        # Обновляем данные существующего пользователя
+        update_fields = []
+        params = []
+
+        if username is not None:
+            update_fields.append("username = ?")
+            params.append(username)
+
+        if first_name is not None:
+            update_fields.append("first_name = ?")
+            params.append(first_name)
+
+        if update_fields:
+            query = f"UPDATE users SET {', '.join(update_fields)} WHERE chat_id = ?"
+            params.append(chat_id)
+
+            cursor.execute(query, params)
+            conn.commit()
+            logger.debug(f"Обновлены данные пользователя {chat_id}")
 
 
 def save_user(chat_id: int, username: Optional[str], first_name: Optional[str], notification_time: Optional[str] = None) -> bool:
@@ -259,41 +562,35 @@ def save_user(chat_id: int, username: Optional[str], first_name: Optional[str], 
         bool: True, если данные успешно сохранены
     """
     try:
-        if os.path.exists(USERS_FILE):
-            df = pd.read_csv(USERS_FILE)
+        conn = _get_db_connection()
+        cursor = conn.cursor()
 
-            # Проверка, существует ли пользователь
-            if chat_id in df['chat_id'].values:
-                # Обновление существующего пользователя
-                df.loc[df['chat_id'] == chat_id, 'username'] = username
-                df.loc[df['chat_id'] == chat_id, 'first_name'] = first_name
-
-                if notification_time is not None:
-                    df.loc[df['chat_id'] == chat_id, 'notification_time'] = notification_time
-            else:
-                # Добавление нового пользователя
-                new_user = {
-                    'chat_id': chat_id,
-                    'username': username,
-                    'first_name': first_name,
-                    'notification_time': notification_time
-                }
-                df = pd.concat([df, pd.DataFrame([new_user])], ignore_index=True)
-
-            df.to_csv(USERS_FILE, index=False)
+        # Проверяем, существует ли пользователь
+        cursor.execute("SELECT 1 FROM users WHERE chat_id = ?", (chat_id,))
+        if cursor.fetchone() is None:
+            # Добавляем нового пользователя
+            cursor.execute(
+                "INSERT INTO users (chat_id, username, first_name, notification_time) VALUES (?, ?, ?, ?)",
+                (chat_id, username, first_name, notification_time)
+            )
         else:
-            # Создание нового файла пользователей с этим пользователем
-            initialize_files()
-            new_user = {
-                'chat_id': chat_id,
-                'username': username,
-                'first_name': first_name,
-                'notification_time': notification_time
-            }
-            pd.DataFrame([new_user]).to_csv(USERS_FILE, index=False)
+            # Обновляем существующего пользователя
+            if notification_time is not None:
+                cursor.execute(
+                    "UPDATE users SET username = ?, first_name = ?, notification_time = ? WHERE chat_id = ?",
+                    (username, first_name, notification_time, chat_id)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE users SET username = ?, first_name = ? WHERE chat_id = ?",
+                    (username, first_name, chat_id)
+                )
 
+        conn.commit()
         logger.info(f"Данные пользователя {chat_id} успешно сохранены")
+
         return True
+
     except Exception as e:
         logger.error(f"Ошибка при сохранении данных пользователя {chat_id}: {e}")
         return False
@@ -310,24 +607,28 @@ def get_users_for_notification(current_time: str) -> List[Dict[str, Any]]:
     Returns:
         List[Dict[str, Any]]: список пользователей для уведомления
     """
-    if not os.path.exists(USERS_FILE):
-        logger.warning(f"Файл пользователей {USERS_FILE} не найден")
-        return []
-
     try:
-        df = pd.read_csv(USERS_FILE)
+        conn = _get_db_connection()
+        cursor = conn.cursor()
 
-        # Фильтрация пользователей, у которых время уведомления совпадает с текущим
-        users_to_notify = df[df['notification_time'] == current_time]
-
-        if len(users_to_notify) == 0:
-            return []
+        cursor.execute(
+            "SELECT chat_id, username, first_name, notification_time FROM users WHERE notification_time = ?",
+            (current_time,)
+        )
 
         # Преобразование в список словарей
-        users_list = users_to_notify.to_dict('records')
-        logger.info(f"Найдено {len(users_list)} пользователей для уведомления в {current_time}")
+        users = []
+        for row in cursor.fetchall():
+            users.append({
+                'chat_id': row[0],
+                'username': row[1],
+                'first_name': row[2],
+                'notification_time': row[3]
+            })
 
-        return users_list
+        logger.info(f"Найдено {len(users)} пользователей для уведомления в {current_time}")
+        return users
+
     except Exception as e:
         logger.error(f"Ошибка при получении пользователей для уведомления: {e}")
         return []
@@ -343,15 +644,48 @@ def get_entry_count_by_day(chat_id: int) -> Dict[str, int]:
     Returns:
         Dict[str, int]: словарь {дата: количество записей}
     """
-    user_file = get_user_data_file(chat_id)
-
-    if not os.path.exists(user_file):
-        return {}
-
     try:
-        df = pd.read_csv(user_file)
-        date_counts = df['date'].value_counts().to_dict()
+        conn = _get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT date, COUNT(*) FROM entries WHERE chat_id = ? GROUP BY date",
+            (chat_id,)
+        )
+
+        date_counts = {row[0]: row[1] for row in cursor.fetchall()}
         return date_counts
+
     except Exception as e:
         logger.error(f"Ошибка при получении статистики записей для пользователя {chat_id}: {e}")
         return {}
+
+
+def flush_all_caches():
+    """
+    Сохраняет все кешированные данные в БД.
+    Полезно перед выключением бота.
+    """
+    with _cache_lock:
+        for chat_id in list(_entries_cache.keys()):
+            if _entries_cache[chat_id].get("modified", False):
+                _flush_cache_to_db(chat_id)
+
+    logger.info("Все кеши сохранены в БД")
+
+
+def close_db_connection():
+    """
+    Закрывает соединение с базой данных.
+    Полезно перед выключением бота.
+    """
+    global _db_connection
+
+    # Сначала сохраняем все кеши
+    flush_all_caches()
+
+    with _db_lock:
+        if _db_connection is not None:
+            _db_connection.close()
+            _db_connection = None
+            logger.info("Соединение с базой данных закрыто")
