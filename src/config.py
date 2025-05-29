@@ -23,7 +23,6 @@ USERS_FILE = os.getenv('USERS_FILE', 'users.csv')
 
 # Токен бота
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-
 # Константы для диалоговых состояний
 # Определение состояний диалогов для ConversationHandler
 (
@@ -34,8 +33,9 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
     SHARE_PASSWORD_SETUP, SHARE_PASSWORD_ENTRY,
     IMPORT_CSV_FILE, IMPORT_CSV_CONFIRM,
     DELETE_ENTRY_CONFIRM, DELETE_ENTRY_DATE,
-    HELP_CATEGORY_SELECT
-) = range(19)
+    HELP_CATEGORY_SELECT,
+    DATE_SELECTION, MANUAL_DATE_INPUT
+) = range(21)
 
 
 def initialize_environment():

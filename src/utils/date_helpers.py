@@ -73,6 +73,149 @@ def get_today() -> str:
     return datetime.datetime.now().strftime('%Y-%m-%d')
 
 
+def get_yesterday() -> str:
+    """
+    Возвращает вчерашнюю дату в формате строки.
+    
+    Returns:
+        str: вчерашняя дата в формате 'YYYY-MM-DD'
+    """
+    yesterday = datetime.datetime.now() - datetime.timedelta(days=1)
+    return yesterday.strftime('%Y-%m-%d')
+
+
+def get_days_ago(days: int) -> str:
+    """
+    Возвращает дату N дней назад в формате строки.
+    
+    Args:
+        days: количество дней назад
+        
+    Returns:
+        str: дата N дней назад в формате 'YYYY-MM-DD'
+    """
+    target_date = datetime.datetime.now() - datetime.timedelta(days=days)
+    return target_date.strftime('%Y-%m-%d')
+
+
+def parse_user_date(date_str: str) -> str:
+    """
+    Парсит пользовательский ввод даты в различных форматах.
+    
+    Поддерживаемые форматы:
+    - DD.MM.YYYY (например: 25.05.2025)
+    - DD.MM.YY (например: 25.05.25)
+    - DD.MM (текущий год, например: 25.05)
+    - DD/MM/YYYY, DD/MM/YY, DD/MM
+    - YYYY-MM-DD (ISO формат)
+    
+    Args:
+        date_str: строка с датой от пользователя
+        
+    Returns:
+        str: дата в формате 'YYYY-MM-DD' или None если не удалось распарсить
+    """
+    if not date_str or not isinstance(date_str, str):
+        return None
+        
+    date_str = date_str.strip()
+    
+    # Список форматов для попытки парсинга
+    formats = [
+        '%d.%m.%Y',    # DD.MM.YYYY
+        '%d.%m.%y',    # DD.MM.YY
+        '%d.%m',       # DD.MM (текущий год)
+        '%d/%m/%Y',    # DD/MM/YYYY
+        '%d/%m/%y',    # DD/MM/YY
+        '%d/%m',       # DD/MM (текущий год)
+        '%Y-%m-%d'     # YYYY-MM-DD (ISO)
+    ]
+    
+    current_year = datetime.datetime.now().year
+    
+    for fmt in formats:
+        try:
+            if '%Y' not in fmt and '%y' not in fmt:
+                # Для форматов без года добавляем текущий год
+                parsed_date = datetime.datetime.strptime(date_str, fmt)
+                parsed_date = parsed_date.replace(year=current_year)
+            else:
+                parsed_date = datetime.datetime.strptime(date_str, fmt)
+                
+            return parsed_date.strftime('%Y-%m-%d')
+        except ValueError:
+            continue
+            
+    return None
+
+
+def is_valid_entry_date(date_str: str) -> bool:
+    """
+    Проверяет, является ли дата валидной для создания записи.
+    
+    Ограничения:
+    - Не должна быть в будущем
+    - Не должна быть раньше 2020-01-01
+    
+    Args:
+        date_str: дата в формате 'YYYY-MM-DD'
+        
+    Returns:
+        bool: True если дата валидна для записи
+    """
+    if not date_str or not isinstance(date_str, str):
+        return False
+        
+    try:
+        target_date = datetime.datetime.strptime(date_str, '%Y-%m-%d').date()
+        today = datetime.datetime.now().date()
+        min_date = datetime.date(2020, 1, 1)
+        
+        # Дата не должна быть в будущем
+        if target_date > today:
+            return False
+            
+        # Дата не должна быть слишком старой
+        if target_date < min_date:
+            return False
+            
+        return True
+    except ValueError:
+        return False
+
+
+def format_date_for_user(date_str: str, include_day_name: bool = False) -> str:
+    """
+    Форматирует дату для отображения пользователю.
+    
+    Args:
+        date_str: дата в формате 'YYYY-MM-DD'
+        include_day_name: включать ли название дня недели
+        
+    Returns:
+        str: отформатированная дата для пользователя
+    """
+    if not date_str:
+        return ""
+        
+    try:
+        date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d')
+        
+        if include_day_name:
+            # Русские названия дней недели
+            day_names = [
+                'понедельник', 'вторник', 'среда', 'четверг',
+                'пятница', 'суббота', 'воскресенье'
+            ]
+            day_name = day_names[date_obj.weekday()]
+            return f"{day_name} {date_obj.strftime('%d.%m.%Y')}"
+        else:
+            return date_obj.strftime('%d.%m.%Y')
+    except ValueError:
+        return date_str
+
+
+
 def is_valid_time_format(time_str: str) -> bool:
     """
     Checks if the string is a valid time format HH:MM (with exactly 2 digits for both).
@@ -105,4 +248,117 @@ def format_date(date_str: str, output_format: str = '%d.%m.%Y') -> str:
         date_obj = datetime.datetime.strptime(date_str, '%Y-%m-%d')
         return date_obj.strftime(output_format)
     except ValueError:
-        return date_str  # Возвращаем исходную строку в случае ошибки
+        return date_str
+
+
+def get_date_options() -> list:
+    """
+    Возвращает список опций дат для выбора (вчера, 2 дня назад и т.д.).
+    
+    Returns:
+        list: список словарей с информацией о датах
+    """
+    today = datetime.datetime.now().date()
+    options = []
+    
+    # Добавляем опции для последних 7 дней
+    for i in range(1, 8):
+        date = today - datetime.timedelta(days=i)
+        date_str = date.strftime('%Y-%m-%d')
+        display_date = date.strftime('%d.%m.%Y')
+        
+        if i == 1:
+            label = f"Вчера ({display_date})"
+        else:
+            label = f"{i} дня назад ({display_date})"
+            
+        options.append({
+            'date': date_str,
+            'label': label,
+            'callback': f"date_select_{date_str}"
+        })
+    
+    return options
+
+
+def validate_manual_date(date_str: str) -> Tuple[bool, Optional[str], Optional[str]]:
+    """
+    Валидирует введенную пользователем дату.
+    
+    Args:
+        date_str: строка с датой, введенная пользователем
+        
+    Returns:
+        Tuple[bool, Optional[str], Optional[str]]: 
+            (успех, нормализованная_дата, сообщение_об_ошибке)
+    """
+    if not date_str or not date_str.strip():
+        return False, None, "Пожалуйста, введите дату."
+    
+    date_str = date_str.strip()
+    today = datetime.datetime.now().date()
+    
+    # Поддерживаемые форматы
+    formats = [
+        '%d.%m.%Y',    # 29.05.2025
+        '%d.%m.%y',    # 29.05.25
+        '%d-%m-%Y',    # 29-05-2025
+        '%d-%m-%y',    # 29-05-25
+        '%Y-%m-%d',    # 2025-05-29
+        '%d/%m/%Y',    # 29/05/2025
+        '%d/%m/%y'     # 29/05/25
+    ]
+    
+    parsed_date = None
+    for date_format in formats:
+        try:
+            parsed_date = datetime.datetime.strptime(date_str, date_format).date()
+            break
+        except ValueError:
+            continue
+    
+    if parsed_date is None:
+        return False, None, (
+            "Неверный формат даты. Поддерживаемые форматы:\n"
+            "• 29.05.2025\n"
+            "• 29.05.25\n"
+            "• 29-05-2025\n"
+            "• 2025-05-29"
+        )
+    
+    # Проверяем, что дата не в будущем
+    if parsed_date > today:
+        return False, None, "Нельзя добавлять записи на будущие даты."
+    
+    # Проверяем, что дата не слишком старая (например, не более 2 лет назад)
+    two_years_ago = today - datetime.timedelta(days=730)
+    if parsed_date < two_years_ago:
+        return False, None, f"Дата слишком старая. Минимальная дата: {two_years_ago.strftime('%d.%m.%Y')}"
+    
+    return True, parsed_date.strftime('%Y-%m-%d'), None
+
+
+def get_yesterday() -> str:
+    """
+    Возвращает вчерашнюю дату в формате строки.
+    
+    Returns:
+        str: вчерашняя дата в формате 'YYYY-MM-DD'
+    """
+    yesterday = datetime.datetime.now().date() - datetime.timedelta(days=1)
+    return yesterday.strftime('%Y-%m-%d')
+
+
+def get_date_n_days_ago(days: int) -> str:
+    """
+    Возвращает дату N дней назад в формате строки.
+    
+    Args:
+        days: количество дней назад
+        
+    Returns:
+        str: дата N дней назад в формате 'YYYY-MM-DD'
+    """
+    target_date = datetime.datetime.now().date() - datetime.timedelta(days=days)
+    return target_date.strftime('%Y-%m-%d')
+  # Возвращаем исходную строку в случае ошибки

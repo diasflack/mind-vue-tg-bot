@@ -13,9 +13,10 @@ NUMERIC_KEYBOARD = ReplyKeyboardMarkup([
     ['10', '/cancel']
 ], one_time_keyboard=True)
 
-# Основная клавиатура с командами - только /add и /help
+# Основная клавиатура с командами
 MAIN_KEYBOARD = ReplyKeyboardMarkup([
-    ['/add', '/help']
+    ['/add', '/add_date'],
+    ['/help']
 ], resize_keyboard=True, is_persistent=True)
 
 
@@ -40,6 +41,47 @@ def get_date_range_keyboard(prefix=""):
         [InlineKeyboardButton("Последние 30 дней", callback_data=f"{prefix}date_range_{month_ago}_{today}")],
         [InlineKeyboardButton("Последние 90 дней", callback_data=f"{prefix}date_range_{quarter_ago}_{today}")],
         [InlineKeyboardButton("Всё время", callback_data=f"{prefix}date_range_all")]
+    ]
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+def get_date_selection_keyboard():
+    """
+    Создает inline-клавиатуру для выбора даты записи.
+
+    Returns:
+        InlineKeyboardMarkup: клавиатура с кнопками выбора даты
+    """
+    from src.utils.date_helpers import get_yesterday, get_days_ago, format_date_for_user
+    
+    # Получаем даты
+    yesterday = get_yesterday()
+    two_days_ago = get_days_ago(2)
+    three_days_ago = get_days_ago(3)
+    week_ago = get_days_ago(7)
+    
+    keyboard = [
+        [InlineKeyboardButton(
+            f"Вчера ({format_date_for_user(yesterday)})", 
+            callback_data="date_yesterday"
+        )],
+        [InlineKeyboardButton(
+            f"2 дня назад ({format_date_for_user(two_days_ago)})", 
+            callback_data="date_2days"
+        )],
+        [InlineKeyboardButton(
+            f"3 дня назад ({format_date_for_user(three_days_ago)})", 
+            callback_data="date_3days"
+        )],
+        [InlineKeyboardButton(
+            f"Неделю назад ({format_date_for_user(week_ago)})", 
+            callback_data="date_week"
+        )],
+        [InlineKeyboardButton(
+            "Ввести дату вручную", 
+            callback_data="date_manual"
+        )]
     ]
 
     return InlineKeyboardMarkup(keyboard)
