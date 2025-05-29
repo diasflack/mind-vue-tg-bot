@@ -1,15 +1,15 @@
 import unittest
 import os
 import sys
-from datetime import datetime, date
 from freezegun import freeze_time
+from datetime import time
 
 # Add the src directory to the path so we can import the modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.utils.date_helpers import (
     parse_date_range, get_period_name, get_today, 
-    is_valid_time_format, format_date
+    is_valid_time_format, format_date, local_to_utc
 )
 
 class TestDateHelpers(unittest.TestCase):
@@ -90,6 +90,30 @@ class TestDateHelpers(unittest.TestCase):
         # Test with empty string
         formatted = format_date("")
         self.assertEqual(formatted, "")
+
+    @freeze_time("2023-05-15")  # Anchor ‘today’ so the date part is stable
+    def test_various_offsets(self):
+        """Validate conversion for several representative offsets."""
+        test_matrix = [
+            # local time,  offset (h), expected UTC,  description
+            (time(12, 0), 0, "12:00", "UTC itself"),
+            (time(12, 0), 3, "09:00", "UTC+03:00 → earlier"),
+            (time(23, 45), -2, "01:45", "UTC−02:00 → next day"),
+            (time(0, 30), 5.5, "19:00", "UTC+05:30 → prev day"),
+            (time(0, 0), -10, "10:00", "UTC−10:00 → same day"),
+            (time(18, 45), -3.5, "22:15", "UTC−03:30 fractional"),
+            (time(10, 0), 4.25, "05:45", "UTC+04:15 fractional"),
+        ]
+
+        for local_t, offset, expected, note in test_matrix:
+            with self.subTest(msg=note, local_time=local_t, offset=offset):
+                utc_clock = local_to_utc(local_t, offset)
+                self.assertEqual(
+                    utc_clock,
+                    expected,
+                    f"{note}: {local_t} @ UTC{offset:+} → {expected}",
+                )
+
 
 if __name__ == '__main__':
     unittest.main()

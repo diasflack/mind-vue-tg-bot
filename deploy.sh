@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Development script for the Telegram Mood Tracker Bot
-# Usage: ./dev.sh [start|logs|restart|stop]
+# Usage: ./deploy.sh [start|logs|restart|stop]
 
 # Check if .env file exists
 if [ ! -f .env ]; then
@@ -30,6 +30,24 @@ case "$1" in
         echo "Showing logs..."
         docker-compose -f $COMPOSE_FILE logs -f
         ;;
+    purge-logs)
+        echo "Stopping containers..."
+        docker-compose -f $COMPOSE_FILE down
+
+        echo "Removing log files..."
+        for container_id in $(docker ps -a -q --filter "name=$(basename $(pwd))"); do
+            log_file=$(docker inspect --format='{{.LogPath}}' $container_id)
+            if [ -f "$log_file" ]; then
+                echo "Purging logs for $container_id: $log_file"
+                sudo truncate -s 0 "$log_file"
+            fi
+        done
+
+        echo "Restarting containers..."
+        docker-compose -f $COMPOSE_FILE up -d
+
+        echo "Logs cleared and containers restarted."
+        ;;
     stop)
         echo "Stopping development environment..."
         docker-compose -f $COMPOSE_FILE down
@@ -46,11 +64,12 @@ case "$1" in
         docker-compose -f $COMPOSE_FILE up -d
         ;;
     *)
-        echo "Usage: $0 [start|exec|logs|stop|restart|rebuild]"
+        echo "Usage: $0 [start|exec|logs|purge-logs|stop|restart|rebuild]"
         echo ""
         echo "  start   - Start development environment"
         echo "  exec    - Run the bot in the container"
         echo "  logs    - Show logs"
+        echo "  purge-logs - Stop containers, clear their logs, and restart them"
         echo "  stop    - Stop development environment"
         echo "  restart - Restart bot process (after code changes)"
         echo "  rebuild - Rebuild container (only needed for dependency changes)"

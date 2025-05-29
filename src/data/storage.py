@@ -634,6 +634,40 @@ def get_users_for_notification(current_time: str) -> List[Dict[str, Any]]:
         return []
 
 
+def get_all_users_with_notifications() -> List[Dict[str, Any]]:
+    """
+    Получает список всех пользователей, у которых настроены уведомления.
+
+    Returns:
+        List[Dict[str, Any]]: список всех пользователей с настроенными уведомлениями
+    """
+    try:
+        conn = _get_db_connection()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT chat_id, username, first_name, notification_time FROM users WHERE notification_time IS NOT NULL"
+        )
+
+        # Преобразование в список словарей
+        users = []
+        for row in cursor.fetchall():
+            users.append({
+                'chat_id': row[0],
+                'username': row[1],
+                'first_name': row[2],
+                'notification_time': row[3]
+            })
+
+        logger.info(f"Найдено {len(users)} пользователей с настроенными уведомлениями")
+        return users
+
+    except Exception as e:
+        logger.error(f"Ошибка при получении пользователей с уведомлениями: {e}")
+        return []
+
+
+
 def get_entry_count_by_day(chat_id: int) -> Dict[str, int]:
     """
     Возвращает словарь с количеством записей по датам.

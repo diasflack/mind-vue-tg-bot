@@ -362,3 +362,32 @@ def get_date_n_days_ago(days: int) -> str:
     target_date = datetime.datetime.now().date() - datetime.timedelta(days=days)
     return target_date.strftime('%Y-%m-%d')
   # Возвращаем исходную строку в случае ошибки
+
+
+def local_to_utc(local_time: datetime.time, offset_hours: int) -> str:
+    """
+    Convert a clock time that is known to be in a fixed UTC offset
+    into the corresponding UTC clock time (“HH:MM”).
+
+    Parameters
+    ----------
+    local_time     : datetime.time – the time entered by the user
+    offset_hours   : int – e.g., +3, -5, 5
+
+    Returns
+    -------
+    str – formatted as “HH:MM”
+    """
+    # Build a fixed-offset tzinfo, e.g., UTC+03:00 or UTC−05:30
+    sign = 1 if offset_hours >= 0 else -1
+    hours = int(abs(offset_hours))
+    minutes = int(round((abs(offset_hours) - hours) * 60))
+    tz = datetime.timezone(sign * datetime.timedelta(hours=hours, minutes=minutes))
+
+    # Anchor on today's date (any date works; we only care about the clock part)
+    today = datetime.datetime.utcnow().date()
+    local_dt = datetime.datetime.combine(today, local_time, tzinfo=tz)
+
+    # Convert to UTC and format
+    utc_dt = local_dt.astimezone(datetime.timezone.utc)
+    return utc_dt.strftime("%H:%M")
