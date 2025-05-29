@@ -349,7 +349,7 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Обработчик ошибок для приложения.
     """
-    logger.error(f"Произошла ошибка при обработке обновления: {context.error}")
+    logger.exception(f"Произошла ошибка при обработке обновления: {context.error}")
 
     # Если обновление доступно, можно получить chat_id
     if update:

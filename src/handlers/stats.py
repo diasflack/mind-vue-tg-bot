@@ -8,7 +8,7 @@ import io
 import logging
 import pandas as pd
 from telegram import Update
-from telegram.ext import ContextTypes, CommandHandler, ConversationHandler
+from telegram.ext import ContextTypes, CommandHandler, ConversationHandler, CallbackQueryHandler
 
 from src.utils.keyboards import MAIN_KEYBOARD
 from src.data.storage import get_user_entries
@@ -55,7 +55,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Пользователь {chat_id} запросил статистику")
 
     # Отправляем сообщение о начале обработки
-    status_message = await update.message.reply_text(
+    status_message = await update.effective_message.reply_text(
         "Обрабатываю данные, это может занять несколько секунд..."
     )
 
@@ -64,7 +64,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not entries:
         await status_message.delete()
-        await update.message.reply_text(
+        await update.effective_message.reply_text(
             "У вас еще нет записей в дневнике или не удалось расшифровать данные.",
             reply_markup=MAIN_KEYBOARD
         )
@@ -80,7 +80,7 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await status_message.delete()
 
     # Отправляем статистику
-    await update.message.reply_text(stats_text, reply_markup=MAIN_KEYBOARD)
+    await update.effective_message.reply_text(stats_text, reply_markup=MAIN_KEYBOARD)
     return ConversationHandler.END
 
 
@@ -159,7 +159,13 @@ def register(application):
     Args:
         application: экземпляр приложения бота
     """
-    application.add_handler(CommandHandler("stats", stats))
+    application.add_handlers(
+        [
+            CommandHandler("stats", stats),
+            CallbackQueryHandler(stats, pattern="^notify_stats$"),
+        ]
+    )
+
     application.add_handler(CommandHandler("download", download_diary))
 
     logger.info("Обработчики статистики зарегистрированы")

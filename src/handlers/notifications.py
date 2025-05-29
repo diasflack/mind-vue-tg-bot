@@ -5,7 +5,7 @@
 
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes, CommandHandler, ConversationHandler,
@@ -145,7 +145,7 @@ async def cancel_notify_command(update: Update, context: ContextTypes.DEFAULT_TY
 
     logger.info(f"Пользователь {chat_id} отключил уведомления")
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         "❌ Ежедневные уведомления отключены.",
         reply_markup=MAIN_KEYBOARD
     )
@@ -436,59 +436,7 @@ async def notification_callback(update: Update, context: ContextTypes.DEFAULT_TY
     chat_id = query.message.chat_id
     action = query.data
 
-    if action == "notify_add":
-        # Начинаем процесс добавления записи
-        try:
-            # Создаем имитацию объекта Message для обработчика
-            # Используем context.bot.send_message для создания новых сообщений
-            from telegram import Message, User, Chat
-            
-            # Получаем данные пользователя и чата
-            user = update.effective_user
-            chat = update.effective_chat
-            
-            # Создаем правильный метод reply_text с использованием context.bot
-            async def send_message_func(text, reply_markup=None, parse_mode=None):
-                return await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode
-                )
-            
-            # Создаем объект сообщения для имитации команды /add
-            fake_message = type('MockMessage', (), {
-                'chat': chat,
-                'from_user': user,
-                'reply_text': send_message_func,  # Используем правильную функцию отправки
-                'message_id': query.message.message_id,
-                'date': query.message.date
-            })()
-            
-            # Создаем объект Update для имитации команды
-            fake_update = type('MockUpdate', (), {
-                'message': fake_message,
-                'effective_chat': chat,
-                'effective_user': user,
-                'callback_query': None
-            })()
-            
-            # Очищаем аргументы команды
-            context.args = []
-            
-            # Вызываем обработчик добавления записи
-            from src.handlers.entry import start_entry
-            await start_entry(fake_update, context)
-            
-        except Exception as e:
-            logger.error(f"Ошибка при запуске добавления записи из уведомления: {e}")
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="Произошла ошибка при запуске добавления записи. Попробуйте использовать команду /add напрямую.",
-                reply_markup=MAIN_KEYBOARD
-            )
-
-    elif action == "notify_stats":
+    if action == "notify_stats":
         # Загружаем статистику
         try:
             # Создаем имитацию объекта Message для обработчика
@@ -587,13 +535,15 @@ def register(application):
 
     application.add_handler(notification_conversation)
 
-    application.add_handler(CommandHandler("cancel_notify", cancel_notify_command))
-    
+    application.add_handlers(
+        [
+            CommandHandler("cancel_notify", cancel_notify_command),
+            CallbackQueryHandler(cancel_notify_command, pattern="^notify_disable"),
+        ]
+    )
+
     # Новые команды для принудительной отправки уведомлений
     application.add_handler(CommandHandler("force_notify", force_notify_command))
     # application.add_handler(CommandHandler("admin_notify", admin_notify_command))
-
-    # Добавляем обработчик для кнопок в уведомлениях
-    application.add_handler(CallbackQueryHandler(notification_callback, pattern=r"^notify_"))
 
     logger.info("Обработчики уведомлений зарегистрированы")

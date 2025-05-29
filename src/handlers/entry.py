@@ -90,7 +90,7 @@ async def start_entry(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logger.info(f"Пользователь {chat_id} начал добавление новой записи за {today}")
 
-    await update.message.reply_text(
+    await update.effective_message.reply_text(
         f"{replace_message}Добавляем новую запись за {today}.\n\n"
         "Оцените ваше настроение от 1 до 10:\n"
         "(Чтобы отменить процесс в любой момент, нажмите /cancel)",
@@ -648,7 +648,10 @@ def register(application: Application):
 
     # Создание обработчика разговора для процесса добавления записи (стандартный)
     entry_conversation_handler = ConversationHandler(
-        entry_points=[CommandHandler("add", start_entry)],
+        entry_points=[
+            CommandHandler("add", start_entry),
+            CallbackQueryHandler(start_entry, pattern="^notify_add$"),
+        ],
         states={
             MOOD: [mood_handler],
             SLEEP: [sleep_handler],
