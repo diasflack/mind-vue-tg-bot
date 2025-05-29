@@ -207,10 +207,17 @@ async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Пользователь {chat_id} выбрал дату для записи: {selected_date}")
 
         formatted_date = format_date_for_user(selected_date, include_day_name=True)
+        
+        # Сначала редактируем сообщение без клавиатуры
         await query.edit_message_text(
             f"{replace_message}Добавляем новую запись за {formatted_date}.\n\n"
             "Оцените ваше настроение от 1 до 10:\n"
-            "(Чтобы отменить процесс в любой момент, нажмите /cancel)",
+            "(Чтобы отменить процесс в любой момент, нажмите /cancel)"
+        )
+        
+        # Затем отправляем клавиатуру отдельным сообщением
+        await update.effective_chat.send_message(
+            "Выберите оценку:",
             reply_markup=NUMERIC_KEYBOARD
         )
 

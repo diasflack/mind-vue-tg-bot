@@ -19,8 +19,8 @@ case "$1" in
     start)
         echo "Starting development environment..."
         docker-compose -f $COMPOSE_FILE up -d
-        echo "To view logs: ./dev.sh logs"
-        echo "To run the bot: ./dev.sh exec"
+        echo "To view logs: ./deploy.sh logs"
+        echo "To run the bot: ./deploy.sh exec"
         ;;
     exec)
         echo "Running the bot in the container..."

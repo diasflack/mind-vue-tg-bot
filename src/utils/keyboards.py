@@ -15,8 +15,7 @@ NUMERIC_KEYBOARD = ReplyKeyboardMarkup([
 
 # Основная клавиатура с командами
 MAIN_KEYBOARD = ReplyKeyboardMarkup([
-    ['/add', '/add_date'],
-    ['/help']
+    ['/add', '/help']
 ], resize_keyboard=True, is_persistent=True)
 
 
