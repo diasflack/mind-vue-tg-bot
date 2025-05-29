@@ -39,6 +39,7 @@ users.csv
 .vscode/
 *.swp
 *.swo
+.serena
 
 # Файлы ОС
 .DS_Store
