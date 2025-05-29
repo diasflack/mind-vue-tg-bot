@@ -347,7 +347,7 @@ async def admin_notify_command(update: Update, context: ContextTypes.DEFAULT_TYP
     """
     chat_id = update.effective_chat.id
     
-    # TODO: Добавить проверку прав администратора
+    # TOD: Добавить проверку прав администратора
     # Для примера считаем, что любой может использовать (в продакшене нужна проверка)
     
     if not context.args or len(context.args) < 1:
