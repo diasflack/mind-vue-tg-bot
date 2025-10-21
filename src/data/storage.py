@@ -103,6 +103,14 @@ def _initialize_db(conn: sqlite3.Connection) -> None:
     conn.execute('CREATE INDEX IF NOT EXISTS idx_entries_chat_id ON entries(chat_id)')
     conn.execute('CREATE INDEX IF NOT EXISTS idx_entries_date ON entries(date)')
 
+    # ИСПРАВЛЕНИЕ: Добавляем индекс на notification_time для оптимизации запросов уведомлений
+    # Это ускоряет проверку пользователей для отправки уведомлений (выполняется каждые 60 секунд)
+    conn.execute('''
+        CREATE INDEX IF NOT EXISTS idx_users_notification_time
+        ON users(notification_time)
+        WHERE notification_time IS NOT NULL
+    ''')
+
     # Фиксация изменений
     conn.commit()
 
@@ -552,11 +560,13 @@ def save_user(chat_id: int, username: Optional[str], first_name: Optional[str], 
     """
     Сохраняет или обновляет информацию о пользователе.
 
+    ВАЖНО: Если notification_time=None, поле будет установлено в NULL (отключение уведомлений).
+
     Args:
         chat_id: ID пользователя в Telegram
         username: имя пользователя (опционально)
         first_name: имя (опционально)
-        notification_time: время уведомления в формате HH:MM (опционально)
+        notification_time: время уведомления в формате HH:MM (опционально, None для отключения)
 
     Returns:
         bool: True, если данные успешно сохранены
@@ -574,20 +584,15 @@ def save_user(chat_id: int, username: Optional[str], first_name: Optional[str], 
                 (chat_id, username, first_name, notification_time)
             )
         else:
-            # Обновляем существующего пользователя
-            if notification_time is not None:
-                cursor.execute(
-                    "UPDATE users SET username = ?, first_name = ?, notification_time = ? WHERE chat_id = ?",
-                    (username, first_name, notification_time, chat_id)
-                )
-            else:
-                cursor.execute(
-                    "UPDATE users SET username = ?, first_name = ? WHERE chat_id = ?",
-                    (username, first_name, chat_id)
-                )
+            # ИСПРАВЛЕНИЕ: Всегда обновляем notification_time, даже если она None
+            # Это позволяет корректно отключать уведомления
+            cursor.execute(
+                "UPDATE users SET username = ?, first_name = ?, notification_time = ? WHERE chat_id = ?",
+                (username, first_name, notification_time, chat_id)
+            )
 
         conn.commit()
-        logger.info(f"Данные пользователя {chat_id} успешно сохранены")
+        logger.info(f"Данные пользователя {chat_id} успешно сохранены (notification_time={notification_time})")
 
         return True
 
