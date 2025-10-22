@@ -91,7 +91,7 @@ class TestDateHelpers(unittest.TestCase):
         formatted = format_date("")
         self.assertEqual(formatted, "")
 
-    @freeze_time("2023-05-15")  # Anchor ‘today’ so the date part is stable
+    @freeze_time("2023-05-15")  # Anchor 'today' so the date part is stable
     def test_various_offsets(self):
         """Validate conversion for several representative offsets."""
         test_matrix = [
@@ -112,6 +112,93 @@ class TestDateHelpers(unittest.TestCase):
                     utc_clock,
                     expected,
                     f"{note}: {local_t} @ UTC{offset:+} → {expected}",
+                )
+
+    @freeze_time("2023-05-15")
+    def test_extreme_timezones(self):
+        """Test extreme timezone offsets (UTC-12 to UTC+14)."""
+        test_cases = [
+            # Extreme negative offset (Baker Island, Howland Island)
+            (time(12, 0), -12, "00:00", "UTC-12:00 (Baker Island) → next day boundary"),
+            (time(0, 0), -12, "12:00", "UTC-12:00 midnight → noon UTC"),
+            (time(23, 59), -12, "11:59", "UTC-12:00 almost midnight"),
+
+            # Extreme positive offset (Line Islands, Kiribati)
+            (time(12, 0), 14, "22:00", "UTC+14:00 (Kiribati) → previous day"),
+            (time(0, 0), 14, "10:00", "UTC+14:00 midnight → morning UTC prev day"),
+            (time(14, 0), 14, "00:00", "UTC+14:00 2pm → midnight UTC"),
+
+            # UTC+13 (Tonga, Samoa)
+            (time(13, 0), 13, "00:00", "UTC+13:00 1pm → midnight UTC"),
+            (time(0, 30), 13, "11:30", "UTC+13:00 past midnight"),
+
+            # UTC-11 (American Samoa)
+            (time(11, 0), -11, "22:00", "UTC-11:00 11am → 10pm UTC prev day"),
+            (time(23, 0), -11, "10:00", "UTC-11:00 11pm → 10am UTC next day"),
+        ]
+
+        for local_t, offset, expected, description in test_cases:
+            with self.subTest(msg=description, local_time=local_t, offset=offset):
+                result = local_to_utc(local_t, offset)
+                self.assertEqual(
+                    result,
+                    expected,
+                    f"{description}: {local_t} @ UTC{offset:+} → {expected}, got {result}",
+                )
+
+    @freeze_time("2023-05-15")
+    def test_midnight_crossovers(self):
+        """Test critical midnight boundary cases."""
+        test_cases = [
+            # Crossing midnight backwards (local time after midnight → UTC before midnight)
+            (time(0, 0), 1, "23:00", "UTC+1 midnight → 11pm UTC previous day"),
+            (time(0, 1), 2, "22:01", "UTC+2 just past midnight"),
+            (time(1, 0), 3, "22:00", "UTC+3 1am → 10pm UTC previous day"),
+
+            # Crossing midnight forwards (local time before midnight → UTC after midnight)
+            (time(23, 0), -1, "00:00", "UTC-1 11pm → midnight UTC next day"),
+            (time(23, 59), -1, "00:59", "UTC-1 almost midnight"),
+            (time(22, 0), -2, "00:00", "UTC-2 10pm → midnight UTC next day"),
+
+            # Edge case: exactly at midnight with zero offset
+            (time(0, 0), 0, "00:00", "UTC midnight stays midnight"),
+
+            # Multiple day wrap-around scenarios
+            (time(1, 30), 5, "20:30", "UTC+5 early morning → evening before"),
+            (time(22, 30), -5, "03:30", "UTC-5 late evening → early morning after"),
+        ]
+
+        for local_t, offset, expected, description in test_cases:
+            with self.subTest(msg=description, local_time=local_t, offset=offset):
+                result = local_to_utc(local_t, offset)
+                self.assertEqual(
+                    result,
+                    expected,
+                    f"{description}: {local_t} @ UTC{offset:+} → {expected}, got {result}",
+                )
+
+    @freeze_time("2023-05-15")
+    def test_negative_offsets(self):
+        """Test comprehensive negative timezone offsets."""
+        test_cases = [
+            # Americas timezones
+            (time(10, 0), -5, "15:00", "UTC-5 (EST) 10am → 3pm UTC"),
+            (time(14, 30), -5, "19:30", "UTC-5 (EST) afternoon"),
+            (time(8, 0), -8, "16:00", "UTC-8 (PST) 8am → 4pm UTC"),
+            (time(20, 0), -7, "03:00", "UTC-7 (MST) 8pm → 3am UTC next day"),
+
+            # Edge cases with negative offsets
+            (time(0, 0), -1, "01:00", "UTC-1 midnight → 1am UTC"),
+            (time(12, 0), -6, "18:00", "UTC-6 noon → 6pm UTC"),
+        ]
+
+        for local_t, offset, expected, description in test_cases:
+            with self.subTest(msg=description, local_time=local_t, offset=offset):
+                result = local_to_utc(local_t, offset)
+                self.assertEqual(
+                    result,
+                    expected,
+                    f"{description}: {local_t} @ UTC{offset:+} → {expected}, got {result}",
                 )
 
 
