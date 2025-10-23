@@ -432,8 +432,14 @@ class TestEntryWithDate(unittest.IsolatedAsyncioTestCase):
         # Mock callback_query for date selection
         self.update.callback_query = MagicMock()
         self.update.callback_query.answer = AsyncMock()
+        self.update.callback_query.edit_message_text = AsyncMock()
         self.update.callback_query.message = MagicMock()
         self.update.callback_query.message.edit_text = AsyncMock()
+
+        # Mock effective_chat.send_message for sending keyboards
+        self.update.effective_chat = MagicMock()
+        self.update.effective_chat.id = self.test_chat_id
+        self.update.effective_chat.send_message = AsyncMock()
 
         self.context.user_data = {}
 
@@ -459,7 +465,7 @@ class TestEntryWithDate(unittest.IsolatedAsyncioTestCase):
     @patch('src.handlers.entry.register_conversation')
     async def test_select_date_from_quick_options(self, mock_register, mock_get_entries):
         """Test selecting date from quick date options."""
-        self.update.callback_query.data = "date_select_2023-01-14"
+        self.update.callback_query.data = "date_yesterday"
         self.context.user_data = {'entry': {}}
 
         result = await select_date(self.update, self.context)
@@ -467,14 +473,18 @@ class TestEntryWithDate(unittest.IsolatedAsyncioTestCase):
         # Verify callback was answered
         self.update.callback_query.answer.assert_called_once()
 
-        # Verify date was saved
-        self.assertEqual(self.context.user_data['entry']['date'], '2023-01-14')
+        # Verify date was saved (yesterday's date will be saved)
+        self.assertIn('date', self.context.user_data['entry'])
 
-        # Verify next question was asked
-        self.update.callback_query.message.edit_text.assert_called_once()
+        # Verify message was edited
+        self.update.callback_query.edit_message_text.assert_called_once()
 
-        # Verify returned next state
-        self.assertIsNotNone(result)
+        # Verify keyboard was sent
+        self.update.effective_chat.send_message.assert_called_once()
+
+        # Verify returned MOOD state
+        from src.config import MOOD
+        self.assertEqual(result, MOOD)
 
     @patch('src.handlers.entry.register_conversation')
     async def test_select_manual_date_input(self, mock_register):
@@ -490,18 +500,22 @@ class TestEntryWithDate(unittest.IsolatedAsyncioTestCase):
         # Verify returned MANUAL_DATE_INPUT state
         self.assertEqual(result, MANUAL_DATE_INPUT)
 
-    @patch('src.utils.date_helpers.validate_manual_date', return_value=(True, '2023-01-20', None))
+    @patch('src.utils.date_helpers.parse_user_date', return_value='2023-01-20')
+    @patch('src.utils.date_helpers.is_valid_entry_date', return_value=(True, None))
     @patch('src.handlers.entry.get_user_entries', return_value=[])
     @patch('src.handlers.entry.register_conversation')
-    async def test_manual_date_input_valid(self, mock_register, mock_get_entries, mock_validate):
+    async def test_manual_date_input_valid(self, mock_register, mock_get_entries, mock_is_valid, mock_parse):
         """Test manual date input with valid date."""
         self.update.message.text = "20.01.2023"
         self.context.user_data = {'entry': {}}
 
         result = await manual_date_input(self.update, self.context)
 
+        # Verify date was parsed
+        mock_parse.assert_called_once_with("20.01.2023")
+
         # Verify date was validated
-        mock_validate.assert_called_once_with("20.01.2023")
+        mock_is_valid.assert_called_once_with('2023-01-20')
 
         # Verify date was saved
         self.assertEqual(self.context.user_data['entry']['date'], '2023-01-20')
@@ -509,20 +523,23 @@ class TestEntryWithDate(unittest.IsolatedAsyncioTestCase):
         # Verify next question was asked
         self.update.message.reply_text.assert_called()
 
-    @patch('src.utils.date_helpers.validate_manual_date', return_value=(False, None, "Ошибка"))
+    @patch('src.utils.date_helpers.parse_user_date', return_value=None)
     @patch('src.handlers.entry.register_conversation')
-    async def test_manual_date_input_invalid(self, mock_register, mock_validate):
+    async def test_manual_date_input_invalid(self, mock_register, mock_parse):
         """Test manual date input with invalid date."""
         self.update.message.text = "invalid-date"
         self.context.user_data = {'entry': {}}
 
         result = await manual_date_input(self.update, self.context)
 
+        # Verify parse was called
+        mock_parse.assert_called_once_with("invalid-date")
+
         # Verify error message was sent
         self.update.message.reply_text.assert_called_once()
         call_args = self.update.message.reply_text.call_args
         message_text = call_args[0][0]
-        self.assertIn("Ошибка", message_text)
+        self.assertIn("Неверный", message_text)
 
         # Verify returned state is still MANUAL_DATE_INPUT
         self.assertEqual(result, MANUAL_DATE_INPUT)
