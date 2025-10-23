@@ -296,143 +296,182 @@ def analyze_patterns(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
         }
 
 
-def generate_insights(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _analyze_correlation_insights(corr_results: Dict[str, Any]) -> List[Dict[str, Any]]:
     """
-    Генерирует персонализированные инсайты на основе анализа данных.
-    
+    Анализирует результаты корреляций и генерирует соответствующие инсайты.
+
+    Args:
+        corr_results: результаты анализа корреляций
+
+    Returns:
+        List[Dict[str, Any]]: список инсайтов о корреляциях
+    """
+    insights = []
+
+    if corr_results['status'] != 'success':
+        return insights
+
+    # Добавление инсайтов о положительных корреляциях
+    for pos_corr in corr_results['correlations']['positive']:
+        factor = pos_corr['factor']
+        corr = pos_corr['correlation']
+
+        if corr > 0.6:
+            factor_ru = get_russian_factor_name(factor)
+            insights.append({
+                'type': 'correlation_positive',
+                'strength': 'strong',
+                'factor': factor,
+                'message': f"Обнаружена сильная положительная связь между {factor_ru} и вашим настроением "
+                          f"(коэффициент корреляции: {corr:.2f}). Обратите на это внимание!"
+            })
+
+    # Добавление инсайтов о отрицательных корреляциях
+    for neg_corr in corr_results['correlations']['negative']:
+        factor = neg_corr['factor']
+        corr = neg_corr['correlation']
+
+        if corr < -0.6:
+            factor_ru = get_russian_factor_name(factor)
+            insights.append({
+                'type': 'correlation_negative',
+                'strength': 'strong',
+                'factor': factor,
+                'message': f"Обнаружена сильная отрицательная связь между {factor_ru} и вашим настроением "
+                          f"(коэффициент корреляции: {corr:.2f}). Это может быть важным фактором!"
+            })
+
+    return insights
+
+
+def _analyze_trend_insights(trend_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Анализирует результаты трендов и генерирует соответствующие инсайты.
+
+    Args:
+        trend_results: результаты анализа трендов
+
+    Returns:
+        List[Dict[str, Any]]: список инсайтов о трендах
+    """
+    insights = []
+
+    if trend_results['status'] != 'success':
+        return insights
+
+    trends = trend_results['trends']
+
+    # Инсайты о недельных трендах
+    if trends['weekly']['available']:
+        best_day = trends['weekly']['best_day']['day']
+        worst_day = trends['weekly']['worst_day']['day']
+
+        if trends['weekly']['best_day']['value'] - trends['weekly']['worst_day']['value'] > 2:
+            insights.append({
+                'type': 'weekly_pattern',
+                'strength': 'medium',
+                'message': f"В среднем, ваше настроение лучше всего по {best_day.lower()}ам "
+                          f"и хуже всего по {worst_day.lower()}ам. Возможно, стоит планировать важные "
+                          f"дела с учетом этой закономерности."
+            })
+
+    # Инсайты о недавних трендах
+    if trends['recent']['available']:
+        mood_trend = trends['recent']['mood_trend']
+
+        if mood_trend == 'upward':
+            insights.append({
+                'type': 'recent_trend',
+                'trend': 'positive',
+                'message': "За последнюю неделю ваше настроение имеет тенденцию к улучшению. "
+                          "Продолжайте в том же духе!"
+            })
+        elif mood_trend == 'downward':
+            insights.append({
+                'type': 'recent_trend',
+                'trend': 'negative',
+                'message': "За последнюю неделю ваше настроение имеет тенденцию к ухудшению. "
+                          "Может быть, стоит обратить внимание на факторы, которые могут влиять на это."
+            })
+
+    return insights
+
+
+def _analyze_pattern_insights(pattern_results: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Анализирует результаты паттернов и генерирует соответствующие инсайты.
+
+    Args:
+        pattern_results: результаты анализа паттернов
+
+    Returns:
+        List[Dict[str, Any]]: список инсайтов о паттернах
+    """
+    insights = []
+
+    if pattern_results['status'] != 'success':
+        return insights
+
+    patterns = pattern_results['patterns']
+
+    # Инсайты о выходных vs будни
+    weekend_mood = patterns['weekend_vs_weekday']['weekend_mood']
+    weekday_mood = patterns['weekend_vs_weekday']['weekday_mood']
+
+    if weekend_mood - weekday_mood > 2:
+        insights.append({
+            'type': 'weekend_effect',
+            'effect': 'positive',
+            'message': "Ваше настроение значительно лучше в выходные, чем в будни. "
+                      "Возможно, рабочие или учебные факторы влияют на ваше самочувствие."
+        })
+    elif weekday_mood - weekend_mood > 2:
+        insights.append({
+            'type': 'weekend_effect',
+            'effect': 'negative',
+            'message': "Интересно, что ваше настроение лучше в будни, чем в выходные. "
+                      "Возможно, вам помогает структурированный распорядок дня."
+        })
+
+    # Инсайты о цикличности
+    if patterns['cyclicality']['detected']:
+        cycle_days = patterns['cyclicality']['cycle_days']
+
+        insights.append({
+            'type': 'cyclicality',
+            'cycle_days': cycle_days,
+            'message': f"В ваших данных обнаружена периодичность примерно в {cycle_days} дней. "
+                      f"Это может быть связано с биологическими циклами или регулярными событиями в вашей жизни."
+        })
+
+    return insights
+
+
+def _analyze_general_recommendations(entries: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Анализирует общие показатели и генерирует рекомендации.
+
     Args:
         entries: список записей пользователя
-        
+
     Returns:
-        Dict[str, Any]: словарь с персонализированными инсайтами
+        List[Dict[str, Any]]: список общих рекомендаций
     """
-    if not entries or len(entries) < 7:
-        return {
-            'status': 'insufficient_data',
-            'message': 'Для генерации инсайтов нужно не менее 7 записей'
-        }
-    
     insights = []
-    
-    try:
-        # Анализ корреляций
-        corr_results = analyze_correlations(entries)
-        if corr_results['status'] == 'success':
-            # Добавление инсайтов о положительных корреляциях
-            for pos_corr in corr_results['correlations']['positive']:
-                factor = pos_corr['factor']
-                corr = pos_corr['correlation']
-                
-                if corr > 0.6:
-                    factor_ru = get_russian_factor_name(factor)
-                    insights.append({
-                        'type': 'correlation_positive',
-                        'strength': 'strong',
-                        'factor': factor,
-                        'message': f"Обнаружена сильная положительная связь между {factor_ru} и вашим настроением "
-                                  f"(коэффициент корреляции: {corr:.2f}). Обратите на это внимание!"
-                    })
-            
-            # Добавление инсайтов о отрицательных корреляциях
-            for neg_corr in corr_results['correlations']['negative']:
-                factor = neg_corr['factor']
-                corr = neg_corr['correlation']
-                
-                if corr < -0.6:
-                    factor_ru = get_russian_factor_name(factor)
-                    insights.append({
-                        'type': 'correlation_negative',
-                        'strength': 'strong',
-                        'factor': factor,
-                        'message': f"Обнаружена сильная отрицательная связь между {factor_ru} и вашим настроением "
-                                  f"(коэффициент корреляции: {corr:.2f}). Это может быть важным фактором!"
-                    })
-        
-        # Анализ трендов
-        trend_results = analyze_trends(entries)
-        if trend_results['status'] == 'success':
-            trends = trend_results['trends']
-            
-            # Инсайты о недельных трендах
-            if trends['weekly']['available']:
-                best_day = trends['weekly']['best_day']['day']
-                worst_day = trends['weekly']['worst_day']['day']
-                
-                if trends['weekly']['best_day']['value'] - trends['weekly']['worst_day']['value'] > 2:
-                    insights.append({
-                        'type': 'weekly_pattern',
-                        'strength': 'medium',
-                        'message': f"В среднем, ваше настроение лучше всего по {best_day.lower()}ам "
-                                  f"и хуже всего по {worst_day.lower()}ам. Возможно, стоит планировать важные "
-                                  f"дела с учетом этой закономерности."
-                    })
-            
-            # Инсайты о недавних трендах
-            if trends['recent']['available']:
-                mood_trend = trends['recent']['mood_trend']
-                
-                if mood_trend == 'upward':
-                    insights.append({
-                        'type': 'recent_trend',
-                        'trend': 'positive',
-                        'message': "За последнюю неделю ваше настроение имеет тенденцию к улучшению. "
-                                  "Продолжайте в том же духе!"
-                    })
-                elif mood_trend == 'downward':
-                    insights.append({
-                        'type': 'recent_trend',
-                        'trend': 'negative',
-                        'message': "За последнюю неделю ваше настроение имеет тенденцию к ухудшению. "
-                                  "Может быть, стоит обратить внимание на факторы, которые могут влиять на это."
-                    })
-        
-        # Анализ паттернов
-        pattern_results = analyze_patterns(entries)
-        if pattern_results['status'] == 'success':
-            patterns = pattern_results['patterns']
-            
-            # Инсайты о выходных vs будни
-            weekend_mood = patterns['weekend_vs_weekday']['weekend_mood']
-            weekday_mood = patterns['weekend_vs_weekday']['weekday_mood']
-            
-            if weekend_mood - weekday_mood > 2:
-                insights.append({
-                    'type': 'weekend_effect',
-                    'effect': 'positive',
-                    'message': "Ваше настроение значительно лучше в выходные, чем в будни. "
-                              "Возможно, рабочие или учебные факторы влияют на ваше самочувствие."
-                })
-            elif weekday_mood - weekend_mood > 2:
-                insights.append({
-                    'type': 'weekend_effect',
-                    'effect': 'negative',
-                    'message': "Интересно, что ваше настроение лучше в будни, чем в выходные. "
-                              "Возможно, вам помогает структурированный распорядок дня."
-                })
-            
-            # Инсайты о цикличности
-            if patterns['cyclicality']['detected']:
-                cycle_days = patterns['cyclicality']['cycle_days']
-                
-                insights.append({
-                    'type': 'cyclicality',
-                    'cycle_days': cycle_days,
-                    'message': f"В ваших данных обнаружена периодичность примерно в {cycle_days} дней. "
-                              f"Это может быть связано с биологическими циклами или регулярными событиями в вашей жизни."
-                })
-        
-        # Анализ данных для общих рекомендаций
-        df = pd.DataFrame(entries)
-        
-        # Преобразование числовых колонок в числовой формат
-        numeric_columns = ['mood', 'sleep', 'balance', 'mania', 'depression',
-                          'anxiety', 'irritability', 'productivity', 'sociability']
-        
-        for col in numeric_columns:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        
-        # Инсайт о сне
+
+    # Преобразование в DataFrame
+    df = pd.DataFrame(entries)
+
+    # Преобразование числовых колонок в числовой формат
+    numeric_columns = ['mood', 'sleep', 'balance', 'mania', 'depression',
+                      'anxiety', 'irritability', 'productivity', 'sociability']
+
+    for col in numeric_columns:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # Инсайт о сне
+    if 'sleep' in df.columns and 'mood' in df.columns:
         sleep_mood_corr = df[['sleep', 'mood']].corr().iloc[0, 1]
         if sleep_mood_corr > 0.4:
             avg_sleep = df['sleep'].mean()
@@ -443,15 +482,52 @@ def generate_insights(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
                     'message': "Данные показывают, что ваш сон тесно связан с настроением, но в среднем вы оцениваете "
                               "качество сна довольно низко. Улучшение сна может значительно повысить ваше общее самочувствие."
                 })
-        
-        # Инсайт о тревоге
-        if 'anxiety' in df.columns and df['anxiety'].mean() > 7:
-            insights.append({
-                'type': 'anxiety_alert',
-                'strength': 'medium',
-                'message': "Ваш средний уровень тревоги довольно высок. Стоит рассмотреть методы управления тревогой, "
-                          "такие как медитация, дыхательные упражнения или консультация со специалистом."
-            })
+
+    # Инсайт о тревоге
+    if 'anxiety' in df.columns and df['anxiety'].mean() > 7:
+        insights.append({
+            'type': 'anxiety_alert',
+            'strength': 'medium',
+            'message': "Ваш средний уровень тревоги довольно высок. Стоит рассмотреть методы управления тревогой, "
+                      "такие как медитация, дыхательные упражнения или консультация со специалистом."
+        })
+
+    return insights
+
+
+def generate_insights(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Генерирует персонализированные инсайты на основе анализа данных.
+
+    Args:
+        entries: список записей пользователя
+
+    Returns:
+        Dict[str, Any]: словарь с персонализированными инсайтами
+    """
+    if not entries or len(entries) < 7:
+        return {
+            'status': 'insufficient_data',
+            'message': 'Для генерации инсайтов нужно не менее 7 записей'
+        }
+
+    insights = []
+
+    try:
+        # Анализ корреляций
+        corr_results = analyze_correlations(entries)
+        insights.extend(_analyze_correlation_insights(corr_results))
+
+        # Анализ трендов
+        trend_results = analyze_trends(entries)
+        insights.extend(_analyze_trend_insights(trend_results))
+
+        # Анализ паттернов
+        pattern_results = analyze_patterns(entries)
+        insights.extend(_analyze_pattern_insights(pattern_results))
+
+        # Общие рекомендации
+        insights.extend(_analyze_general_recommendations(entries))
         
         return {
             'status': 'success',
