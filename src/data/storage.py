@@ -147,19 +147,20 @@ def _migrate_csv_to_sqlite() -> None:
             csv_path = os.path.join(DATA_FOLDER, csv_file)
             df = pd.read_csv(csv_path)
 
-            # Миграция каждой записи
-            for _, row in df.iterrows():
-                date = row['date']
-                encrypted_data = row['encrypted_data']
+            # Подготовка данных для batch insert (значительно быстрее для больших CSV)
+            entries_data = [
+                (chat_id, row['date'], row['encrypted_data'])
+                for _, row in df.iterrows()
+            ]
 
-                # Добавление записи в SQLite
-                cursor.execute(
-                    "INSERT OR IGNORE INTO entries (chat_id, date, encrypted_data) VALUES (?, ?, ?)",
-                    (chat_id, date, encrypted_data)
-                )
+            # Batch insert всех записей одним запросом (executemany)
+            cursor.executemany(
+                "INSERT OR IGNORE INTO entries (chat_id, date, encrypted_data) VALUES (?, ?, ?)",
+                entries_data
+            )
 
             conn.commit()
-            logger.info(f"Мигрировано {len(df)} записей пользователя {chat_id} из CSV в SQLite")
+            logger.info(f"Мигрировано {len(df)} записей пользователя {chat_id} из CSV в SQLite (batch operation)")
 
             # Создаем резервную копию CSV-файла перед миграцией
             backup_path = csv_path + '.bak'

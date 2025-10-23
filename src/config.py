@@ -23,6 +23,22 @@ USERS_FILE = os.getenv('USERS_FILE', 'users.csv')
 
 # Токен бота
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+
+# Валидация BOT_TOKEN (Security best practice)
+# В тестовом окружении может отсутствовать - логируем warning вместо ошибки
+if not TELEGRAM_BOT_TOKEN:
+    logger.warning(
+        "TELEGRAM_BOT_TOKEN не установлен! "
+        "Это нормально для тестов, но в production необходимо установить переменную окружения."
+    )
+elif len(TELEGRAM_BOT_TOKEN) < 30:
+    logger.warning(
+        f"TELEGRAM_BOT_TOKEN кажется недействительным ({len(TELEGRAM_BOT_TOKEN)} символов). "
+        "Telegram bot tokens обычно ~45 символов. Проверьте правильность токена."
+    )
+else:
+    logger.info(f"BOT_TOKEN загружен успешно (длина: {len(TELEGRAM_BOT_TOKEN)} символов)")
+
 # Константы для диалоговых состояний
 # Определение состояний диалогов для ConversationHandler
 (

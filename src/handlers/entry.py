@@ -20,6 +20,7 @@ from src.data.storage import save_data, save_user, get_user_entries
 from src.utils.formatters import format_entry_summary
 from src.utils.date_helpers import get_today
 from src.utils.conversation_manager import register_conversation, end_conversation, end_all_conversations
+from src.utils.validation import validate_numeric_input, get_validation_error_message
 
 # Настройка логгирования
 logger = logging.getLogger(__name__)
@@ -329,16 +330,17 @@ async def mood_with_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Обновление состояния в менеджере диалогов
     register_conversation(chat_id, HANDLER_DATE_NAME, SLEEP)
 
-    # Валидация ввода (должно быть число от 1 до 10)
-    if not text.isdigit() or int(text) < 1 or int(text) > 10:
+    # Валидация ввода с использованием централизованной функции
+    is_valid, value = validate_numeric_input(text, min_val=1, max_val=10)
+    if not is_valid:
         await update.message.reply_text(
-            "Пожалуйста, введите число от 1 до 10:",
+            get_validation_error_message("настроение"),
             reply_markup=NUMERIC_KEYBOARD
         )
         return MOOD
 
-    logger.debug(f"Пользователь {chat_id} установил настроение: {text}")
-    context.user_data['entry']['mood'] = text
+    logger.debug(f"Пользователь {chat_id} установил настроение: {value}")
+    context.user_data['entry']['mood'] = str(value)
 
     await update.message.reply_text(
         "Оцените качество вашего сна от 1 до 10:",
