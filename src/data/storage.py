@@ -115,6 +115,93 @@ def _initialize_db(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _extract_chat_id_from_csv_filename(filename: str) -> int:
+    """
+    Извлекает chat_id из имени CSV-файла формата 'user_<chat_id>_data.csv'.
+
+    Args:
+        filename: имя CSV-файла
+
+    Returns:
+        int: извлеченный chat_id
+    """
+    return int(filename.split('_')[1])
+
+
+def _is_user_already_migrated(cursor: sqlite3.Cursor, chat_id: int) -> bool:
+    """
+    Проверяет, были ли уже мигрированы записи пользователя.
+
+    Args:
+        cursor: курсор базы данных
+        chat_id: ID чата пользователя
+
+    Returns:
+        bool: True если пользователь уже мигрирован, False иначе
+    """
+    cursor.execute("SELECT COUNT(*) FROM entries WHERE chat_id = ?", (chat_id,))
+    return cursor.fetchone()[0] > 0
+
+
+def _ensure_migrated_user_exists(cursor: sqlite3.Cursor, chat_id: int) -> None:
+    """
+    Создает пользователя для миграции, если он не существует.
+
+    Args:
+        cursor: курсор базы данных
+        chat_id: ID чата пользователя
+    """
+    cursor.execute(
+        "INSERT OR IGNORE INTO users (chat_id, username, first_name) VALUES (?, ?, ?)",
+        (chat_id, f"migrated_user_{chat_id}", f"Migrated User {chat_id}")
+    )
+
+
+def _migrate_single_csv_file(csv_file: str, cursor: sqlite3.Cursor, conn: sqlite3.Connection) -> None:
+    """
+    Мигрирует один CSV-файл в базу данных.
+
+    Args:
+        csv_file: имя CSV-файла
+        cursor: курсор базы данных
+        conn: соединение с базой данных
+    """
+    # Извлечение chat_id из имени файла
+    chat_id = _extract_chat_id_from_csv_filename(csv_file)
+
+    # Проверка, есть ли уже записи для этого пользователя в БД
+    if _is_user_already_migrated(cursor, chat_id):
+        logger.info(f"Записи пользователя {chat_id} уже мигрированы в SQLite")
+        return
+
+    # Создаем пользователя, если его нет (для foreign key constraint)
+    _ensure_migrated_user_exists(cursor, chat_id)
+
+    # Чтение CSV-файла
+    csv_path = os.path.join(DATA_FOLDER, csv_file)
+    df = pd.read_csv(csv_path)
+
+    # Подготовка данных для batch insert (значительно быстрее для больших CSV)
+    entries_data = [
+        (chat_id, row['date'], row['encrypted_data'])
+        for _, row in df.iterrows()
+    ]
+
+    # Batch insert всех записей одним запросом (executemany)
+    cursor.executemany(
+        "INSERT OR IGNORE INTO entries (chat_id, date, encrypted_data) VALUES (?, ?, ?)",
+        entries_data
+    )
+
+    conn.commit()
+    logger.info(f"Мигрировано {len(df)} записей пользователя {chat_id} из CSV в SQLite (batch operation)")
+
+    # Создаем резервную копию CSV-файла перед миграцией
+    backup_path = csv_path + '.bak'
+    os.rename(csv_path, backup_path)
+    logger.info(f"Создана резервная копия CSV-файла: {backup_path}")
+
+
 def _migrate_csv_to_sqlite() -> None:
     """
     Мигрирует данные из CSV-файлов в SQLite.
@@ -128,45 +215,7 @@ def _migrate_csv_to_sqlite() -> None:
 
     for csv_file in csv_files:
         try:
-            # Извлечение chat_id из имени файла
-            chat_id = int(csv_file.split('_')[1])
-
-            # Проверка, есть ли уже записи для этого пользователя в БД
-            cursor.execute("SELECT COUNT(*) FROM entries WHERE chat_id = ?", (chat_id,))
-            if cursor.fetchone()[0] > 0:
-                logger.info(f"Записи пользователя {chat_id} уже мигрированы в SQLite")
-                continue
-
-            # Создаем пользователя, если его нет (для foreign key constraint)
-            cursor.execute(
-                "INSERT OR IGNORE INTO users (chat_id, username, first_name) VALUES (?, ?, ?)",
-                (chat_id, f"migrated_user_{chat_id}", f"Migrated User {chat_id}")
-            )
-
-            # Чтение CSV-файла
-            csv_path = os.path.join(DATA_FOLDER, csv_file)
-            df = pd.read_csv(csv_path)
-
-            # Подготовка данных для batch insert (значительно быстрее для больших CSV)
-            entries_data = [
-                (chat_id, row['date'], row['encrypted_data'])
-                for _, row in df.iterrows()
-            ]
-
-            # Batch insert всех записей одним запросом (executemany)
-            cursor.executemany(
-                "INSERT OR IGNORE INTO entries (chat_id, date, encrypted_data) VALUES (?, ?, ?)",
-                entries_data
-            )
-
-            conn.commit()
-            logger.info(f"Мигрировано {len(df)} записей пользователя {chat_id} из CSV в SQLite (batch operation)")
-
-            # Создаем резервную копию CSV-файла перед миграцией
-            backup_path = csv_path + '.bak'
-            os.rename(csv_path, backup_path)
-            logger.info(f"Создана резервная копия CSV-файла: {backup_path}")
-
+            _migrate_single_csv_file(csv_file, cursor, conn)
         except Exception as e:
             logger.error(f"Ошибка при миграции CSV-файла {csv_file}: {e}")
             conn.rollback()

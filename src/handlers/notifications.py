@@ -45,6 +45,7 @@ async def notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Пользователь {chat_id} начал процесс настройки нотификаций")
 
     def get_utc_inline_keyboard():
+        """Создает inline-клавиатуру с кнопками выбора часового пояса UTC-12 до UTC+14."""
         buttons = []
         for i in range(-12, 15):
             sign = '+' if i >= 0 else ''
@@ -62,6 +63,16 @@ async def notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def timezone_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обрабатывает выбор часового пояса пользователем.
+
+    Args:
+        update: объект Update от Telegram
+        context: контекст бота
+
+    Returns:
+        int: следующее состояние диалога (TYPING_TIME)
+    """
     query = update.callback_query
     await query.answer()
 
@@ -80,6 +91,16 @@ async def timezone_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def time_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обрабатывает ввод времени для уведомлений и сохраняет настройки.
+
+    Args:
+        update: объект Update от Telegram
+        context: контекст бота
+
+    Returns:
+        int: ConversationHandler.END при успехе или TYPING_TIME при ошибке
+    """
     chat_id = update.effective_chat.id
     username = update.effective_user.username
     first_name = update.effective_user.first_name

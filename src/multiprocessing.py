@@ -151,8 +151,10 @@ def run_in_process(timeout: Optional[int] = None, cache_key: Optional[Callable] 
         Callable: декорированная функция
     """
     def decorator(func):
+        """Внутренняя функция-декоратор для обёртывания целевой функции."""
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
+            """Обёртка, выполняющая функцию в отдельном процессе с поддержкой кеширования и timeout."""
             # Проверка кеша, если включено кеширование
             if cache_key is not None:
                 key = _create_cache_key(func, args, kwargs, cache_key)

@@ -31,6 +31,40 @@ HANDLER_NAME = "entry_handler"
 # Глобальный объект для хранения ссылки на обработчик разговора
 entry_conversation_handler = None
 
+
+def check_entry_exists(chat_id: int, date: str) -> bool:
+    """
+    Проверяет, существует ли запись за указанную дату.
+
+    Args:
+        chat_id: ID чата пользователя
+        date: дата в формате YYYY-MM-DD
+
+    Returns:
+        bool: True если запись существует, False иначе
+    """
+    entries = get_user_entries(chat_id)
+    for entry in entries:
+        if entry.get('date') == date:
+            return True
+    return False
+
+
+def get_replacement_message(date: str) -> str:
+    """
+    Формирует сообщение о замене существующей записи.
+
+    Args:
+        date: дата в формате YYYY-MM-DD
+
+    Returns:
+        str: отформатированное сообщение о замене или пустая строка
+    """
+    from src.utils.date_helpers import format_date_for_user
+    formatted_date = format_date_for_user(date, include_day_name=True)
+    return f"У вас уже есть запись за {formatted_date}. Новая запись заменит существующую.\n\n"
+
+
 async def custom_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Локальный обработчик отмены для этого диалога.
@@ -186,24 +220,15 @@ async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if selected_date:
         # Сохраняем выбранную дату и переходим к вводу показателей
         context.user_data['entry']['date'] = selected_date
-        
+
         # Проверяем, есть ли уже запись за эту дату
-        from src.data.storage import get_user_entries
-        entries = get_user_entries(chat_id)
-        entry_exists = False
-        for entry in entries:
-            if entry.get('date') == selected_date:
-                entry_exists = True
-                break
+        entry_exists = check_entry_exists(chat_id, selected_date)
 
         # Переходим к состоянию MOOD
         register_conversation(chat_id, HANDLER_DATE_NAME, MOOD)
 
         # Подготовка сообщения о замене существующей записи
-        replace_message = ""
-        if entry_exists:
-            formatted_date = format_date_for_user(selected_date, include_day_name=True)
-            replace_message = f"У вас уже есть запись за {formatted_date}. Новая запись заменит существующую.\n\n"
+        replace_message = get_replacement_message(selected_date) if entry_exists else ""
 
         logger.info(f"Пользователь {chat_id} выбрал дату для записи: {selected_date}")
 
@@ -268,21 +293,13 @@ async def manual_date_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['entry']['date'] = parsed_date
 
     # Проверяем, есть ли уже запись за эту дату
-    entries = get_user_entries(chat_id)
-    entry_exists = False
-    for entry in entries:
-        if entry.get('date') == parsed_date:
-            entry_exists = True
-            break
+    entry_exists = check_entry_exists(chat_id, parsed_date)
 
     # Переходим к состоянию MOOD
     register_conversation(chat_id, HANDLER_DATE_NAME, MOOD)
 
     # Подготовка сообщения о замене существующей записи
-    replace_message = ""
-    if entry_exists:
-        formatted_date = format_date_for_user(parsed_date, include_day_name=True)
-        replace_message = f"У вас уже есть запись за {formatted_date}. Новая запись заменит существующую.\n\n"
+    replace_message = get_replacement_message(parsed_date) if entry_exists else ""
 
     logger.info(f"Пользователь {chat_id} ввел дату для записи: {parsed_date}")
 
