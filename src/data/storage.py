@@ -46,7 +46,7 @@ def _get_db_connection() -> sqlite3.Connection:
     Returns:
         sqlite3.Connection: соединение с базой данных
     """
-    global _db_connection
+    global _db_connection, DB_FILE
 
     with _db_lock:
         if _db_connection is None:
@@ -136,6 +136,12 @@ def _migrate_csv_to_sqlite() -> None:
             if cursor.fetchone()[0] > 0:
                 logger.info(f"Записи пользователя {chat_id} уже мигрированы в SQLite")
                 continue
+
+            # Создаем пользователя, если его нет (для foreign key constraint)
+            cursor.execute(
+                "INSERT OR IGNORE INTO users (chat_id, username, first_name) VALUES (?, ?, ?)",
+                (chat_id, f"migrated_user_{chat_id}", f"Migrated User {chat_id}")
+            )
 
             # Чтение CSV-файла
             csv_path = os.path.join(DATA_FOLDER, csv_file)

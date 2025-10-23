@@ -31,13 +31,17 @@ class TestCSVMigration(unittest.TestCase):
         # Create a temporary directory for test data
         self.test_dir = tempfile.mkdtemp()
 
-        # Mock the DATA_FOLDER config
-        self.original_data_folder = src.config.DATA_FOLDER
-        src.config.DATA_FOLDER = self.test_dir
-
-        # Update DB_FILE to point to temp directory
+        # Save original values from storage module (not config)
+        self.original_data_folder = storage.DATA_FOLDER
         self.original_db_file = storage.DB_FILE
+
+        # Patch DATA_FOLDER and DB_FILE in the storage module directly
+        storage.DATA_FOLDER = self.test_dir
         storage.DB_FILE = os.path.join(self.test_dir, "test_mood_tracker.db")
+
+        # Also update in config for consistency
+        self.original_config_data_folder = src.config.DATA_FOLDER
+        src.config.DATA_FOLDER = self.test_dir
 
         # Reset the database connection
         if storage._db_connection:
@@ -67,9 +71,12 @@ class TestCSVMigration(unittest.TestCase):
         except:
             pass
 
-        # Restore the original DATA_FOLDER and DB_FILE
-        src.config.DATA_FOLDER = self.original_data_folder
+        # Restore the original values in storage module
+        storage.DATA_FOLDER = self.original_data_folder
         storage.DB_FILE = self.original_db_file
+
+        # Restore config as well
+        src.config.DATA_FOLDER = self.original_config_data_folder
 
     def _create_csv_file(self, chat_id, num_entries=5):
         """Helper to create a test CSV file."""
