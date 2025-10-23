@@ -310,10 +310,9 @@ class TestNotificationHandlers(unittest.TestCase):
             123, "testuser", "Test", notification_time=None
         )
 
-    @patch('src.handlers.notifications.context')
     @patch('src.handlers.notifications.save_user')
     @patch('src.handlers.notifications.MAIN_KEYBOARD', MagicMock())
-    def test_notification_callback_disable(self, mock_save_user, mock_context):
+    def test_notification_callback_disable(self, mock_save_user):
         """Test the notification_callback handler for disable action."""
         from src.handlers.notifications import notification_callback
 
