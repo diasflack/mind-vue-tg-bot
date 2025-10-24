@@ -360,3 +360,248 @@ def get_survey_statistics(
         'first_response_date': row[1],
         'last_response_date': row[2]
     }
+
+
+# ============================================================================
+# Функции для работы с пользовательскими шаблонами (Phase 3)
+# ============================================================================
+
+def create_user_template(
+    conn: sqlite3.Connection,
+    chat_id: int,
+    name: str,
+    description: str
+) -> Optional[int]:
+    """
+    Создает пользовательский шаблон опроса.
+
+    Args:
+        conn: Соединение с БД
+        chat_id: ID пользователя-создателя
+        name: Название шаблона (3-50 символов, уникальное)
+        description: Описание шаблона (до 500 символов)
+
+    Returns:
+        int или None: ID созданного шаблона или None при ошибке
+    """
+    try:
+        # Проверяем лимит (максимум 20 пользовательских шаблонов)
+        count = count_user_templates(conn, chat_id)
+        if count >= 20:
+            logger.warning(f"Пользователь {chat_id} достиг лимита шаблонов (20)")
+            return None
+
+        # Проверяем уникальность названия для пользователя
+        cursor = conn.execute("""
+            SELECT id FROM survey_templates
+            WHERE name = ? AND created_by = ?
+        """, (name, chat_id))
+
+        if cursor.fetchone():
+            logger.warning(f"Шаблон с названием '{name}' уже существует у пользователя {chat_id}")
+            return None
+
+        # Создаем шаблон (по умолчанию is_active=False, is_system=False)
+        cursor = conn.execute("""
+            INSERT INTO survey_templates
+            (name, description, is_system, is_active, created_by, created_at)
+            VALUES (?, ?, 0, 0, ?, ?)
+        """, (name, description, chat_id, datetime.now().isoformat()))
+
+        conn.commit()
+        template_id = cursor.lastrowid
+
+        logger.info(f"Создан пользовательский шаблон '{name}' (ID: {template_id}) пользователем {chat_id}")
+        return template_id
+
+    except Exception as e:
+        logger.error(f"Ошибка создания пользовательского шаблона: {e}")
+        conn.rollback()
+        return None
+
+
+def update_template(
+    conn: sqlite3.Connection,
+    template_id: int,
+    chat_id: int,
+    **updates
+) -> bool:
+    """
+    Обновляет шаблон опроса. Только владелец может обновить свой шаблон.
+
+    Args:
+        conn: Соединение с БД
+        template_id: ID шаблона
+        chat_id: ID пользователя (для проверки прав)
+        **updates: Поля для обновления (name, description, is_active)
+
+    Returns:
+        bool: True если успешно, False если ошибка или нет прав
+    """
+    try:
+        # Проверяем принадлежность шаблона пользователю
+        cursor = conn.execute("""
+            SELECT created_by, is_system FROM survey_templates
+            WHERE id = ?
+        """, (template_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            logger.warning(f"Шаблон {template_id} не найден")
+            return False
+
+        created_by, is_system = row
+
+        if is_system:
+            logger.warning(f"Попытка изменить системный шаблон {template_id}")
+            return False
+
+        if created_by != chat_id:
+            logger.warning(f"Попытка изменить чужой шаблон {template_id} пользователем {chat_id}")
+            return False
+
+        # Формируем SQL для обновления
+        allowed_fields = {'name', 'description', 'is_active'}
+        update_fields = {k: v for k, v in updates.items() if k in allowed_fields}
+
+        if not update_fields:
+            logger.warning("Нет полей для обновления")
+            return False
+
+        # Если меняется название, проверяем уникальность
+        if 'name' in update_fields:
+            cursor = conn.execute("""
+                SELECT id FROM survey_templates
+                WHERE name = ? AND created_by = ? AND id != ?
+            """, (update_fields['name'], chat_id, template_id))
+
+            if cursor.fetchone():
+                logger.warning(f"Шаблон с названием '{update_fields['name']}' уже существует")
+                return False
+
+        set_clause = ', '.join([f"{k} = ?" for k in update_fields.keys()])
+        values = list(update_fields.values()) + [template_id]
+
+        conn.execute(f"""
+            UPDATE survey_templates
+            SET {set_clause}
+            WHERE id = ?
+        """, values)
+
+        conn.commit()
+        logger.info(f"Шаблон {template_id} обновлен пользователем {chat_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Ошибка обновления шаблона: {e}")
+        conn.rollback()
+        return False
+
+
+def delete_template(
+    conn: sqlite3.Connection,
+    template_id: int,
+    chat_id: int
+) -> bool:
+    """
+    Удаляет шаблон опроса. Только владелец может удалить свой шаблон.
+    CASCADE удалит все связанные вопросы и ответы.
+
+    Args:
+        conn: Соединение с БД
+        template_id: ID шаблона
+        chat_id: ID пользователя (для проверки прав)
+
+    Returns:
+        bool: True если успешно, False если ошибка или нет прав
+    """
+    try:
+        # Проверяем принадлежность шаблона пользователю
+        cursor = conn.execute("""
+            SELECT created_by, is_system, name FROM survey_templates
+            WHERE id = ?
+        """, (template_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            logger.warning(f"Шаблон {template_id} не найден")
+            return False
+
+        created_by, is_system, name = row
+
+        if is_system:
+            logger.warning(f"Попытка удалить системный шаблон {template_id}")
+            return False
+
+        if created_by != chat_id:
+            logger.warning(f"Попытка удалить чужой шаблон {template_id} пользователем {chat_id}")
+            return False
+
+        # Удаляем шаблон (CASCADE удалит вопросы и ответы)
+        conn.execute("DELETE FROM survey_templates WHERE id = ?", (template_id,))
+        conn.commit()
+
+        logger.info(f"Шаблон '{name}' (ID: {template_id}) удален пользователем {chat_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Ошибка удаления шаблона: {e}")
+        conn.rollback()
+        return False
+
+
+def get_user_templates(
+    conn: sqlite3.Connection,
+    chat_id: int,
+    only_active: bool = False
+) -> List[Dict[str, Any]]:
+    """
+    Получает шаблоны, созданные пользователем.
+
+    Args:
+        conn: Соединение с БД
+        chat_id: ID пользователя
+        only_active: Возвращать только активные шаблоны
+
+    Returns:
+        List[Dict]: Список шаблонов пользователя
+    """
+    query = "SELECT * FROM survey_templates WHERE created_by = ?"
+    params = [chat_id]
+
+    if only_active:
+        query += " AND is_active = 1"
+
+    query += " ORDER BY created_at DESC"
+
+    cursor = conn.execute(query, params)
+    columns = [desc[0] for desc in cursor.description]
+
+    templates = []
+    for row in cursor.fetchall():
+        template = dict(zip(columns, row))
+        template['is_system'] = bool(template['is_system'])
+        template['is_active'] = bool(template['is_active'])
+        templates.append(template)
+
+    logger.debug(f"Получено {len(templates)} пользовательских шаблонов для {chat_id}")
+    return templates
+
+
+def count_user_templates(conn: sqlite3.Connection, chat_id: int) -> int:
+    """
+    Подсчитывает количество шаблонов пользователя.
+
+    Args:
+        conn: Соединение с БД
+        chat_id: ID пользователя
+
+    Returns:
+        int: Количество шаблонов
+    """
+    cursor = conn.execute("""
+        SELECT COUNT(*) FROM survey_templates
+        WHERE created_by = ? AND is_system = 0
+    """, (chat_id,))
+
+    return cursor.fetchone()[0]

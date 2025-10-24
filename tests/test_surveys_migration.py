@@ -43,7 +43,7 @@ def test_survey_templates_table_created(temp_db):
 
     expected_columns = {
         'id', 'name', 'description', 'is_system',
-        'creator_chat_id', 'icon', 'created_at', 'is_active'
+        'created_by', 'icon', 'created_at', 'updated_at', 'is_active'
     }
     assert expected_columns.issubset(columns)
 
@@ -139,7 +139,7 @@ def test_foreign_keys_constraints(temp_db):
 
     # Создаем шаблон опроса
     temp_db.execute("""
-        INSERT INTO survey_templates (id, name, is_system, creator_chat_id)
+        INSERT INTO survey_templates (id, name, is_system, created_by)
         VALUES (1, 'Test Survey', 0, 123)
     """)
 
@@ -176,7 +176,7 @@ def test_cascade_delete_questions(temp_db):
 
     # Создаем шаблон
     temp_db.execute("""
-        INSERT INTO survey_templates (id, name, is_system, creator_chat_id)
+        INSERT INTO survey_templates (id, name, is_system, created_by)
         VALUES (1, 'Test Survey', 0, 123)
     """)
 

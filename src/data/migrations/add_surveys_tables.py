@@ -45,11 +45,12 @@ def migrate(conn: sqlite3.Connection) -> None:
                 name TEXT NOT NULL,
                 description TEXT,
                 is_system BOOLEAN DEFAULT 0,
-                creator_chat_id INTEGER,
+                created_by INTEGER,
                 icon TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP,
                 is_active BOOLEAN DEFAULT 1,
-                FOREIGN KEY (creator_chat_id) REFERENCES users(chat_id)
+                FOREIGN KEY (created_by) REFERENCES users(chat_id)
             )
         """)
         logger.info("✓ Таблица survey_templates создана")
