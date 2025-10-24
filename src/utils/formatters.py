@@ -97,6 +97,52 @@ def get_column_name(column: str) -> str:
     return column_names.get(column, column)
 
 
+def _format_comment_preview(comment: str, max_length: int = 50) -> str:
+    """
+    Форматирует комментарий с ограничением длины.
+
+    Args:
+        comment: текст комментария
+        max_length: максимальная длина комментария
+
+    Returns:
+        str: отформатированный комментарий с многоточием если необходимо
+    """
+    if len(comment) > max_length:
+        return comment[:max_length - 3] + "..."
+    return comment
+
+
+def _format_single_entry(entry: Dict[str, Any]) -> str:
+    """
+    Форматирует одну запись дневника для отображения.
+
+    Args:
+        entry: словарь с данными записи
+
+    Returns:
+        str: отформатированная запись
+    """
+    # Форматирование даты в более читаемый вид (ДД.ММ.ГГГГ)
+    formatted_date = format_date(entry['date'])
+
+    result = f"📅 {formatted_date}\n"
+    result += f"😊 Настроение: {entry['mood']}/10\n"
+
+    # Добавляем комментарий, если он есть
+    if entry.get('comment'):
+        comment_preview = _format_comment_preview(entry['comment'])
+        result += f"💬 {comment_preview}\n"
+
+    # Добавляем сон, тревогу и депрессию (как наиболее важные показатели)
+    result += f"😴 Сон: {entry['sleep']}/10\n"
+    result += f"😰 Тревога: {entry['anxiety']}/10\n"
+    result += f"😞 Депрессия: {entry['depression']}/10\n"
+    result += "-------------------\n\n"
+
+    return result
+
+
 def format_entry_list(entries: List[Dict[str, Any]], max_entries: int = 5) -> str:
     """
     Форматирует список последних записей для вывода пользователю.
@@ -125,27 +171,8 @@ def format_entry_list(entries: List[Dict[str, Any]], max_entries: int = 5) -> st
 
     for entry in display_entries:
         try:
-            # Форматирование даты в более читаемый вид (ДД.ММ.ГГГГ)
-            formatted_date = format_date(entry['date'])
-
-            result += f"📅 {formatted_date}\n"
-            result += f"😊 Настроение: {entry['mood']}/10\n"
-
-            # Добавляем комментарий, если он есть
-            if entry.get('comment'):
-                # Ограничиваем длину комментария для компактности
-                comment = entry['comment']
-                if len(comment) > 50:
-                    comment = comment[:47] + "..."
-                result += f"💬 {comment}\n"
-
-            # Добавляем сон, тревогу и депрессию (как наиболее важные показатели)
-            result += f"😴 Сон: {entry['sleep']}/10\n"
-            result += f"😰 Тревога: {entry['anxiety']}/10\n"
-            result += f"😞 Депрессия: {entry['depression']}/10\n"
-
-            result += "-------------------\n\n"
-        except Exception as e:
+            result += _format_single_entry(entry)
+        except Exception:
             # В случае проблем с форматированием отдельной записи, пропускаем ее
             continue
 
