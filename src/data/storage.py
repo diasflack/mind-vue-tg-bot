@@ -15,6 +15,8 @@ from datetime import datetime, timedelta
 
 from src.config import DATA_FOLDER
 from src.data.encryption import encrypt_data, decrypt_data
+from src.data.migrations.add_impressions_tables import migrate as migrate_impressions
+from src.data.migrations.add_surveys_tables import migrate as migrate_surveys
 
 # Настройка логгирования
 logger = logging.getLogger(__name__)
@@ -113,6 +115,31 @@ def _initialize_db(conn: sqlite3.Connection) -> None:
 
     # Фиксация изменений
     conn.commit()
+
+    # Запуск миграций для новых функций
+    logger.info("Запуск миграций базы данных...")
+
+    # Миграция таблиц для впечатлений
+    try:
+        migrate_impressions(conn)
+        logger.info("✓ Миграция impressions выполнена")
+    except Exception as e:
+        logger.error(f"Ошибка при миграции impressions: {e}")
+
+    # Миграция таблиц для опросов
+    try:
+        migrate_surveys(conn)
+        logger.info("✓ Миграция surveys выполнена")
+    except Exception as e:
+        logger.error(f"Ошибка при миграции surveys: {e}")
+
+    # Загрузка системных шаблонов опросов
+    try:
+        from src.data.system_surveys import load_system_surveys
+        load_system_surveys(conn)
+        logger.info("✓ Системные опросы загружены")
+    except Exception as e:
+        logger.error(f"Ошибка при загрузке системных опросов: {e}")
 
 
 def _extract_chat_id_from_csv_filename(filename: str) -> int:
