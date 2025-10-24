@@ -8,7 +8,7 @@ from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     ContextTypes, ConversationHandler, CommandHandler,
-    MessageHandler, filters
+    MessageHandler, filters, Application
 )
 
 from src.config import (
@@ -333,3 +333,10 @@ impression_conversation_handler = ConversationHandler(
     ],
     name=HANDLER_NAME
 )
+
+
+def register(application: Application):
+    """
+    Регистрирует обработчики впечатлений в приложении.
+    """
+    application.add_handler(impression_conversation_handler)

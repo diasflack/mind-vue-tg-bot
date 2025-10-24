@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 from typing import Dict, List, Any
 from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, Application, CommandHandler
 
 from src.data.storage import _get_db_connection
 from src.data.impressions_storage import get_user_impressions
@@ -196,3 +196,11 @@ async def show_impressions_history(update: Update, context: ContextTypes.DEFAULT
         await update.message.reply_text(message)
 
     logger.info(f"Пользователь {chat_id} запросил историю впечатлений: {len(impressions)} шт.")
+
+
+def register(application: Application):
+    """
+    Регистрирует обработчики просмотра впечатлений в приложении.
+    """
+    application.add_handler(CommandHandler('impressions', show_today_impressions))
+    application.add_handler(CommandHandler('impressions_history', show_impressions_history))
