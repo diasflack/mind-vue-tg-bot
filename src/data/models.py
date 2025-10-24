@@ -119,3 +119,125 @@ class SharedPackage(TypedDict):
     encrypted_data: str
     sender_id: int
     format_version: str
+
+
+# ============================================================================
+# Модели для впечатлений (Impressions)
+# ============================================================================
+
+# Допустимые категории впечатлений
+IMPRESSION_CATEGORIES = ("craving", "emotion", "physical", "thoughts", "other")
+
+
+class ImpressionDict(TypedDict):
+    """Структура данных для впечатления."""
+    id: int
+    chat_id: int
+    impression_text: str
+    impression_date: str  # формат 'YYYY-MM-DD'
+    impression_time: str  # формат 'HH:MM:SS'
+    category: Optional[str]  # одна из IMPRESSION_CATEGORIES
+    intensity: Optional[int]  # от 1 до 10
+    entry_date: Optional[str]  # связь с основной записью дня
+
+
+class ImpressionTagDict(TypedDict):
+    """Структура данных для тега впечатления."""
+    id: int
+    chat_id: int
+    tag_name: str
+    tag_color: Optional[str]
+
+
+@dataclass
+class Impression:
+    """Класс для впечатления с проверкой типов и валидацией."""
+    id: int
+    chat_id: int
+    impression_text: str
+    impression_date: str
+    impression_time: str
+    category: Optional[str]
+    intensity: Optional[int]
+    entry_date: Optional[str]
+
+    def __post_init__(self):
+        """Валидация полей после инициализации."""
+        # Валидация категории
+        if self.category is not None and self.category not in IMPRESSION_CATEGORIES:
+            raise ValueError(
+                f"Invalid category: {self.category}. "
+                f"Must be one of {IMPRESSION_CATEGORIES}"
+            )
+
+        # Валидация интенсивности
+        if self.intensity is not None:
+            if not isinstance(self.intensity, int):
+                raise ValueError("Intensity must be an integer")
+            if self.intensity < 1 or self.intensity > 10:
+                raise ValueError("Intensity must be between 1 and 10")
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Impression':
+        """Создает экземпляр класса из словаря."""
+        return cls(
+            id=int(data['id']),
+            chat_id=int(data['chat_id']),
+            impression_text=str(data['impression_text']),
+            impression_date=str(data['impression_date']),
+            impression_time=str(data['impression_time']),
+            category=data.get('category'),
+            intensity=int(data['intensity']) if data.get('intensity') is not None else None,
+            entry_date=data.get('entry_date')
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Преобразует экземпляр класса в словарь."""
+        return {
+            'id': self.id,
+            'chat_id': self.chat_id,
+            'impression_text': self.impression_text,
+            'impression_date': self.impression_date,
+            'impression_time': self.impression_time,
+            'category': self.category,
+            'intensity': self.intensity,
+            'entry_date': self.entry_date
+        }
+
+
+@dataclass
+class ImpressionTag:
+    """Класс для тега впечатления с проверкой типов."""
+    id: int
+    chat_id: int
+    tag_name: str
+    tag_color: Optional[str]
+
+    def __post_init__(self):
+        """Нормализация и валидация после инициализации."""
+        # Приводим имя тега к нижнему регистру
+        self.tag_name = self.tag_name.lower().strip()
+
+    @property
+    def color(self) -> Optional[str]:
+        """Алиас для tag_color для удобства."""
+        return self.tag_color
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ImpressionTag':
+        """Создает экземпляр класса из словаря."""
+        return cls(
+            id=int(data['id']),
+            chat_id=int(data['chat_id']),
+            tag_name=str(data['tag_name']),
+            tag_color=data.get('tag_color')
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Преобразует экземпляр класса в словарь."""
+        return {
+            'id': self.id,
+            'chat_id': self.chat_id,
+            'tag_name': self.tag_name,
+            'tag_color': self.tag_color
+        }
