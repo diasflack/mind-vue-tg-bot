@@ -45,6 +45,7 @@ async def notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info(f"Пользователь {chat_id} начал процесс настройки нотификаций")
 
     def get_utc_inline_keyboard():
+        """Создает inline-клавиатуру с кнопками выбора часового пояса UTC-12 до UTC+14."""
         buttons = []
         for i in range(-12, 15):
             sign = '+' if i >= 0 else ''
@@ -62,6 +63,16 @@ async def notify_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def timezone_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обрабатывает выбор часового пояса пользователем.
+
+    Args:
+        update: объект Update от Telegram
+        context: контекст бота
+
+    Returns:
+        int: следующее состояние диалога (TYPING_TIME)
+    """
     query = update.callback_query
     await query.answer()
 
@@ -80,6 +91,16 @@ async def timezone_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def time_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обрабатывает ввод времени для уведомлений и сохраняет настройки.
+
+    Args:
+        update: объект Update от Telegram
+        context: контекст бота
+
+    Returns:
+        int: ConversationHandler.END при успехе или TYPING_TIME при ошибке
+    """
     chat_id = update.effective_chat.id
     username = update.effective_user.username
     first_name = update.effective_user.first_name
@@ -118,7 +139,7 @@ async def time_entered(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         await update.message.reply_text("Произошла ошибка при обработке времени.")
-        logger.error(f"Не настроить уведомление {chat_id}: {e}")
+        logger.error(f"Не удалось настроить уведомление для {chat_id}: {e}")
 
     end_conversation(chat_id, HANDLER_NAME)
     return ConversationHandler.END
@@ -424,7 +445,7 @@ async def admin_notify_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
 async def notification_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
-    Обрабатывает нажатия на кнопки в уведомлениях.
+    Обрабатывает нажатия на кнопку "Отключить уведомления" в уведомлениях.
 
     Args:
         update: объект с информацией о callback query
@@ -436,55 +457,7 @@ async def notification_callback(update: Update, context: ContextTypes.DEFAULT_TY
     chat_id = query.message.chat_id
     action = query.data
 
-    if action == "notify_stats":
-        # Загружаем статистику
-        try:
-            # Создаем имитацию объекта Message для обработчика
-            from telegram import Message, User, Chat
-            
-            # Получаем данные пользователя и чата
-            user = update.effective_user
-            chat = update.effective_chat
-            
-            # Создаем правильный метод reply_text с использованием context.bot
-            async def send_message_func(text, reply_markup=None, parse_mode=None):
-                return await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode
-                )
-            
-            # Создаем объект сообщения для имитации команды /stats
-            fake_message = type('MockMessage', (), {
-                'chat': chat,
-                'from_user': user,
-                'reply_text': send_message_func,  # Используем правильную функцию отправки
-                'message_id': query.message.message_id,
-                'date': query.message.date
-            })()
-            
-            # Создаем объект Update для имитации команды
-            fake_update = type('MockUpdate', (), {
-                'message': fake_message,
-                'effective_chat': chat,
-                'effective_user': user,
-                'callback_query': None
-            })()
-            
-            # Вызываем обработчик статистики
-            from src.handlers.stats import stats
-            await stats(fake_update, context)
-            
-        except Exception as e:
-            logger.error(f"Ошибка при загрузке статистики из уведомления: {e}")
-            await context.bot.send_message(
-                chat_id=chat_id,
-                text="Произошла ошибка при загрузке статистики. Попробуйте использовать команду /stats напрямую.",
-                reply_markup=MAIN_KEYBOARD
-            )
-
-    elif action == "notify_disable":
+    if action == "notify_disable":
         # Отключение уведомлений
         username = update.effective_user.username
         first_name = update.effective_user.first_name
@@ -535,14 +508,16 @@ def register(application):
 
     application.add_handler(notification_conversation)
 
-    application.add_handlers(
-        [
-            CommandHandler("cancel_notify", cancel_notify_command),
-            CallbackQueryHandler(cancel_notify_command, pattern="^notify_disable"),
-        ]
+    # Команда /cancel_notify для прямого отключения уведомлений
+    application.add_handler(CommandHandler("cancel_notify", cancel_notify_command))
+
+    # ИСПРАВЛЕНИЕ: Правильный обработчик для callback_query "Отключить уведомления"
+    # notify_stats обрабатывается в stats.py, notify_add в entry.py
+    application.add_handler(
+        CallbackQueryHandler(notification_callback, pattern="^notify_disable$")
     )
 
-    # Новые команды для принудительной отправки уведомлений
+    # Команды для принудительной отправки уведомлений
     application.add_handler(CommandHandler("force_notify", force_notify_command))
     # application.add_handler(CommandHandler("admin_notify", admin_notify_command))
 

@@ -20,6 +20,7 @@ from src.data.storage import save_data, save_user, get_user_entries
 from src.utils.formatters import format_entry_summary
 from src.utils.date_helpers import get_today
 from src.utils.conversation_manager import register_conversation, end_conversation, end_all_conversations
+from src.utils.validation import validate_numeric_input, get_validation_error_message
 
 # Настройка логгирования
 logger = logging.getLogger(__name__)
@@ -29,6 +30,40 @@ HANDLER_NAME = "entry_handler"
 
 # Глобальный объект для хранения ссылки на обработчик разговора
 entry_conversation_handler = None
+
+
+def check_entry_exists(chat_id: int, date: str) -> bool:
+    """
+    Проверяет, существует ли запись за указанную дату.
+
+    Args:
+        chat_id: ID чата пользователя
+        date: дата в формате YYYY-MM-DD
+
+    Returns:
+        bool: True если запись существует, False иначе
+    """
+    entries = get_user_entries(chat_id)
+    for entry in entries:
+        if entry.get('date') == date:
+            return True
+    return False
+
+
+def get_replacement_message(date: str) -> str:
+    """
+    Формирует сообщение о замене существующей записи.
+
+    Args:
+        date: дата в формате YYYY-MM-DD
+
+    Returns:
+        str: отформатированное сообщение о замене или пустая строка
+    """
+    from src.utils.date_helpers import format_date_for_user
+    formatted_date = format_date_for_user(date, include_day_name=True)
+    return f"У вас уже есть запись за {formatted_date}. Новая запись заменит существующую.\n\n"
+
 
 async def custom_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
@@ -185,24 +220,15 @@ async def select_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if selected_date:
         # Сохраняем выбранную дату и переходим к вводу показателей
         context.user_data['entry']['date'] = selected_date
-        
+
         # Проверяем, есть ли уже запись за эту дату
-        from src.data.storage import get_user_entries
-        entries = get_user_entries(chat_id)
-        entry_exists = False
-        for entry in entries:
-            if entry.get('date') == selected_date:
-                entry_exists = True
-                break
+        entry_exists = check_entry_exists(chat_id, selected_date)
 
         # Переходим к состоянию MOOD
         register_conversation(chat_id, HANDLER_DATE_NAME, MOOD)
 
         # Подготовка сообщения о замене существующей записи
-        replace_message = ""
-        if entry_exists:
-            formatted_date = format_date_for_user(selected_date, include_day_name=True)
-            replace_message = f"У вас уже есть запись за {formatted_date}. Новая запись заменит существующую.\n\n"
+        replace_message = get_replacement_message(selected_date) if entry_exists else ""
 
         logger.info(f"Пользователь {chat_id} выбрал дату для записи: {selected_date}")
 
@@ -267,21 +293,13 @@ async def manual_date_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['entry']['date'] = parsed_date
 
     # Проверяем, есть ли уже запись за эту дату
-    entries = get_user_entries(chat_id)
-    entry_exists = False
-    for entry in entries:
-        if entry.get('date') == parsed_date:
-            entry_exists = True
-            break
+    entry_exists = check_entry_exists(chat_id, parsed_date)
 
     # Переходим к состоянию MOOD
     register_conversation(chat_id, HANDLER_DATE_NAME, MOOD)
 
     # Подготовка сообщения о замене существующей записи
-    replace_message = ""
-    if entry_exists:
-        formatted_date = format_date_for_user(parsed_date, include_day_name=True)
-        replace_message = f"У вас уже есть запись за {formatted_date}. Новая запись заменит существующую.\n\n"
+    replace_message = get_replacement_message(parsed_date) if entry_exists else ""
 
     logger.info(f"Пользователь {chat_id} ввел дату для записи: {parsed_date}")
 
@@ -329,16 +347,17 @@ async def mood_with_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Обновление состояния в менеджере диалогов
     register_conversation(chat_id, HANDLER_DATE_NAME, SLEEP)
 
-    # Валидация ввода (должно быть число от 1 до 10)
-    if not text.isdigit() or int(text) < 1 or int(text) > 10:
+    # Валидация ввода с использованием централизованной функции
+    is_valid, value = validate_numeric_input(text, min_val=1, max_val=10)
+    if not is_valid:
         await update.message.reply_text(
-            "Пожалуйста, введите число от 1 до 10:",
+            get_validation_error_message("настроение"),
             reply_markup=NUMERIC_KEYBOARD
         )
         return MOOD
 
-    logger.debug(f"Пользователь {chat_id} установил настроение: {text}")
-    context.user_data['entry']['mood'] = text
+    logger.debug(f"Пользователь {chat_id} установил настроение: {value}")
+    context.user_data['entry']['mood'] = str(value)
 
     await update.message.reply_text(
         "Оцените качество вашего сна от 1 до 10:",

@@ -37,7 +37,22 @@ KEY_CACHE_TTL = 3600  # 1 час
 
 # Класс для конвертации объектов datetime в строки при JSON сериализации
 class DateTimeEncoder(json.JSONEncoder):
+    """
+    JSON Encoder для сериализации объектов datetime и pandas Timestamp.
+
+    Расширяет стандартный JSONEncoder для поддержки дат и временных меток.
+    """
+
     def default(self, obj):
+        """
+        Преобразует datetime объекты в ISO формат строки.
+
+        Args:
+            obj: объект для сериализации
+
+        Returns:
+            str: ISO formatted string для datetime объектов или результат базового encoder
+        """
         if isinstance(obj, (datetime.datetime, datetime.date)):
             return obj.isoformat()
         # Проверка на pandas Timestamp если pandas импортирован
