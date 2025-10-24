@@ -241,3 +241,133 @@ class ImpressionTag:
             'tag_name': self.tag_name,
             'tag_color': self.tag_color
         }
+
+
+# Константы для системы опросов
+QUESTION_TYPES = ('numeric', 'text', 'choice', 'yes_no', 'time', 'scale')
+
+
+@dataclass
+class SurveyTemplate:
+    """Класс для шаблона опроса с проверкой типов."""
+    id: int
+    name: str
+    description: Optional[str] = None
+    is_system: bool = False
+    creator_chat_id: Optional[int] = None
+    icon: Optional[str] = None
+    created_at: Optional[str] = None
+    is_active: bool = True
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SurveyTemplate':
+        """Создает экземпляр класса из словаря."""
+        return cls(
+            id=int(data['id']),
+            name=str(data['name']),
+            description=data.get('description'),
+            is_system=bool(data.get('is_system', False)),
+            creator_chat_id=int(data['creator_chat_id']) if data.get('creator_chat_id') else None,
+            icon=data.get('icon'),
+            created_at=data.get('created_at'),
+            is_active=bool(data.get('is_active', True))
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Преобразует экземпляр класса в словарь."""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'description': self.description,
+            'is_system': self.is_system,
+            'creator_chat_id': self.creator_chat_id,
+            'icon': self.icon,
+            'created_at': self.created_at,
+            'is_active': self.is_active
+        }
+
+
+@dataclass
+class SurveyQuestion:
+    """Класс для вопроса опроса с проверкой типов."""
+    id: int
+    template_id: int
+    question_text: str
+    question_type: str
+    order_index: int
+    is_required: bool = True
+    config: Optional[str] = None
+    help_text: Optional[str] = None
+
+    def __post_init__(self):
+        """Валидация после инициализации."""
+        # Проверяем тип вопроса
+        if self.question_type not in QUESTION_TYPES:
+            raise ValueError(
+                f"Недопустимый тип вопроса: {self.question_type}. "
+                f"Допустимые типы: {', '.join(QUESTION_TYPES)}"
+            )
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SurveyQuestion':
+        """Создает экземпляр класса из словаря."""
+        return cls(
+            id=int(data['id']),
+            template_id=int(data['template_id']),
+            question_text=str(data['question_text']),
+            question_type=str(data['question_type']),
+            order_index=int(data['order_index']),
+            is_required=bool(data.get('is_required', True)),
+            config=data.get('config'),
+            help_text=data.get('help_text')
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Преобразует экземпляр класса в словарь."""
+        return {
+            'id': self.id,
+            'template_id': self.template_id,
+            'question_text': self.question_text,
+            'question_type': self.question_type,
+            'order_index': self.order_index,
+            'is_required': self.is_required,
+            'config': self.config,
+            'help_text': self.help_text
+        }
+
+
+@dataclass
+class SurveyResponse:
+    """Класс для ответа на опрос с проверкой типов."""
+    id: int
+    chat_id: int
+    template_id: int
+    response_date: str
+    response_time: str
+    encrypted_data: str
+    created_at: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'SurveyResponse':
+        """Создает экземпляр класса из словаря."""
+        return cls(
+            id=int(data['id']),
+            chat_id=int(data['chat_id']),
+            template_id=int(data['template_id']),
+            response_date=str(data['response_date']),
+            response_time=str(data['response_time']),
+            encrypted_data=str(data['encrypted_data']),
+            created_at=data.get('created_at')
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Преобразует экземпляр класса в словарь."""
+        return {
+            'id': self.id,
+            'chat_id': self.chat_id,
+            'template_id': self.template_id,
+            'response_date': self.response_date,
+            'response_time': self.response_time,
+            'encrypted_data': self.encrypted_data,
+            'created_at': self.created_at
+        }
