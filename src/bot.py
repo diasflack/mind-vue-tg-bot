@@ -12,7 +12,7 @@ from src.config import TELEGRAM_BOT_TOKEN
 from src.data.storage import initialize_storage
 from src.handlers import (
     basic, entry, stats, notifications, sharing, visualization, import_csv, delete, analytics,
-    impression_handler, impression_viewing, survey_handlers, survey_viewing
+    impression_handler, impression_viewing, survey_handlers, survey_viewing, survey_create
 )
 
 # Настройка логгирования
@@ -114,6 +114,7 @@ def create_application():
     impression_viewing.register(application)
     survey_handlers.register(application)
     survey_viewing.register(application)
+    survey_create.register(application)
 
     # Настройка планировщика для уведомлений
     if application.job_queue is None:
