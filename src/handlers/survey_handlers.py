@@ -32,6 +32,7 @@ HANDLER_NAME = "survey_fill"
 async def list_surveys(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     Показывает список доступных опросов - команда /surveys.
+    Избранные опросы показываются первыми.
     """
     chat_id = update.effective_chat.id
     logger.info(f"Пользователь {chat_id} запросил список опросов")
@@ -46,19 +47,47 @@ async def list_surveys(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Получаем список ID избранных опросов
+    from src.data.favorite_surveys_storage import get_favorite_surveys
+    favorites = get_favorite_surveys(conn, chat_id)
+    favorite_ids = {fav['template_id'] for fav in favorites}
+
+    # Разделяем на избранные и обычные
+    favorite_templates = [t for t in templates if t['id'] in favorite_ids]
+    regular_templates = [t for t in templates if t['id'] not in favorite_ids]
+
     message = "📋 Доступные опросы:\n\n"
 
-    for template in templates:
-        icon = template.get('icon', '📝')
-        name = template['name']
-        description = template.get('description', '')
+    # Показываем избранные первыми
+    if favorite_templates:
+        message += "⭐ *Избранные:*\n\n"
+        for template in favorite_templates:
+            icon = template.get('icon', '📝')
+            name = template['name']
+            description = template.get('description', '')
 
-        message += f"{icon} *{name}*\n"
-        if description:
-            message += f"_{description}_\n"
-        message += f"Заполнить: `/fill {name}`\n\n"
+            message += f"{icon} *{name}*\n"
+            if description:
+                message += f"_{description}_\n"
+            message += f"Заполнить: `/fill {name}`\n\n"
+
+    # Затем остальные
+    if regular_templates:
+        if favorite_templates:
+            message += "\n📋 *Остальные опросы:*\n\n"
+
+        for template in regular_templates:
+            icon = template.get('icon', '📝')
+            name = template['name']
+            description = template.get('description', '')
+
+            message += f"{icon} *{name}*\n"
+            if description:
+                message += f"_{description}_\n"
+            message += f"Заполнить: `/fill {name}`\n\n"
 
     message += "\n💡 Для заполнения опроса используйте команду `/fill <название>`"
+    message += "\n⭐ Добавить в избранное: `/add_favorite <название>`"
 
     await update.message.reply_text(
         message,
