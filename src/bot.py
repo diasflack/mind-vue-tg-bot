@@ -12,7 +12,7 @@ from src.config import TELEGRAM_BOT_TOKEN
 from src.data.storage import initialize_storage
 from src.handlers import (
     basic, entry, stats, notifications, sharing, visualization, import_csv, delete, analytics,
-    impression_handler, impression_viewing, survey_handlers, survey_viewing, survey_create, survey_questions, survey_edit, survey_delete, impression_analytics
+    impression_handler, impression_viewing, survey_handlers, survey_viewing, survey_create, survey_questions, survey_edit, survey_delete, impression_analytics, survey_analytics
 )
 
 # Настройка логгирования
@@ -115,6 +115,7 @@ def create_application():
     impression_analytics.register(application)
     survey_handlers.register(application)
     survey_viewing.register(application)
+    survey_analytics.register(application)
     survey_create.register(application)
     survey_questions.register(application)
     survey_edit.register(application)
