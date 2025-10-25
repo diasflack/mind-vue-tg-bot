@@ -11,7 +11,7 @@ from typing import Dict, List, Any, Optional
 logger = logging.getLogger(__name__)
 
 
-def save_impression(conn: sqlite3.Connection, impression_data: Dict[str, Any]) -> bool:
+def save_impression(conn: sqlite3.Connection, impression_data: Dict[str, Any]) -> Optional[int]:
     """
     Сохраняет впечатление в базу данных.
 
@@ -19,18 +19,24 @@ def save_impression(conn: sqlite3.Connection, impression_data: Dict[str, Any]) -
         conn: соединение с базой данных
         impression_data: словарь с данными впечатления
             - chat_id: int
-            - impression_text: str
-            - impression_date: str (YYYY-MM-DD)
-            - impression_time: str (HH:MM:SS)
+            - impression_text или text: str
+            - impression_date или date: str (YYYY-MM-DD)
+            - impression_time или time: str (HH:MM:SS)
             - category: Optional[str]
             - intensity: Optional[int]
             - entry_date: Optional[str]
 
     Returns:
-        bool: True если успешно сохранено
+        Optional[int]: ID созданного впечатления или None при ошибке
     """
     try:
         cursor = conn.cursor()
+
+        # Поддержка разных ключей для обратной совместимости
+        text = impression_data.get('impression_text') or impression_data.get('text')
+        date_val = impression_data.get('impression_date') or impression_data.get('date')
+        time_val = impression_data.get('impression_time') or impression_data.get('time')
+
         cursor.execute("""
             INSERT INTO impressions (
                 chat_id, impression_text, impression_date, impression_time,
@@ -38,21 +44,22 @@ def save_impression(conn: sqlite3.Connection, impression_data: Dict[str, Any]) -
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (
             impression_data['chat_id'],
-            impression_data['impression_text'],
-            impression_data['impression_date'],
-            impression_data['impression_time'],
+            text,
+            date_val,
+            time_val,
             impression_data.get('category'),
             impression_data.get('intensity'),
             impression_data.get('entry_date')
         ))
         conn.commit()
-        logger.debug(f"Впечатление сохранено для пользователя {impression_data['chat_id']}")
-        return True
+        impression_id = cursor.lastrowid
+        logger.debug(f"Впечатление {impression_id} сохранено для пользователя {impression_data['chat_id']}")
+        return impression_id
 
     except sqlite3.Error as e:
         logger.error(f"Ошибка при сохранении впечатления: {e}")
         conn.rollback()
-        return False
+        return None
 
 
 def get_user_impressions(
@@ -348,3 +355,191 @@ def attach_tags_to_impression(
         logger.error(f"Ошибка при привязке тегов: {e}")
         conn.rollback()
         return False
+
+def get_impression_by_id(conn: sqlite3.Connection, impression_id: int, chat_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Получает впечатление по ID с проверкой владельца.
+
+    Args:
+        conn: соединение с базой данных
+        impression_id: ID впечатления
+        chat_id: ID пользователя (для проверки владельца)
+
+    Returns:
+        Optional[Dict]: Данные впечатления или None
+    """
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, chat_id, impression_text, impression_date, impression_time,
+                   category, intensity, entry_date, created_at
+            FROM impressions
+            WHERE id = ? AND chat_id = ?
+        """, (impression_id, chat_id))
+
+        row = cursor.fetchone()
+        if not row:
+            return None
+
+        return {
+            'id': row[0],
+            'chat_id': row[1],
+            'text': row[2],
+            'date': row[3],
+            'time': row[4],
+            'category': row[5],
+            'intensity': row[6],
+            'entry_date': row[7],
+            'created_at': row[8]
+        }
+
+    except sqlite3.Error as e:
+        logger.error(f"Ошибка при получении впечатления {impression_id}: {e}")
+        return None
+
+
+def link_impression_to_entry(
+    conn: sqlite3.Connection,
+    impression_id: int,
+    chat_id: int,
+    entry_date: str
+) -> bool:
+    """
+    Привязывает впечатление к записи дня.
+
+    Args:
+        conn: соединение с базой данных
+        impression_id: ID впечатления
+        chat_id: ID пользователя (для проверки владельца)
+        entry_date: дата записи (YYYY-MM-DD)
+
+    Returns:
+        bool: True если успешно привязано
+    """
+    try:
+        cursor = conn.cursor()
+
+        # Проверяем что впечатление принадлежит пользователю
+        cursor.execute("""
+            SELECT id FROM impressions
+            WHERE id = ? AND chat_id = ?
+        """, (impression_id, chat_id))
+
+        if not cursor.fetchone():
+            logger.warning(f"Впечатление {impression_id} не найдено для пользователя {chat_id}")
+            return False
+
+        # Проверяем существование записи
+        cursor.execute("""
+            SELECT date FROM entries
+            WHERE chat_id = ? AND date = ?
+        """, (chat_id, entry_date))
+
+        if not cursor.fetchone():
+            logger.warning(f"Запись {entry_date} не найдена для пользователя {chat_id}")
+            return False
+
+        # Привязываем впечатление к записи
+        cursor.execute("""
+            UPDATE impressions
+            SET entry_date = ?
+            WHERE id = ? AND chat_id = ?
+        """, (entry_date, impression_id, chat_id))
+
+        conn.commit()
+        logger.debug(f"Впечатление {impression_id} привязано к записи {entry_date}")
+        return True
+
+    except sqlite3.Error as e:
+        logger.error(f"Ошибка при привязке впечатления {impression_id} к записи {entry_date}: {e}")
+        conn.rollback()
+        return False
+
+
+def unlink_impression(conn: sqlite3.Connection, impression_id: int, chat_id: int) -> bool:
+    """
+    Отвязывает впечатление от записи дня.
+
+    Args:
+        conn: соединение с базой данных
+        impression_id: ID впечатления
+        chat_id: ID пользователя (для проверки владельца)
+
+    Returns:
+        bool: True если успешно отвязано
+    """
+    try:
+        cursor = conn.cursor()
+
+        # Проверяем что впечатление принадлежит пользователю
+        cursor.execute("""
+            SELECT id FROM impressions
+            WHERE id = ? AND chat_id = ?
+        """, (impression_id, chat_id))
+
+        if not cursor.fetchone():
+            logger.warning(f"Впечатление {impression_id} не найдено для пользователя {chat_id}")
+            return False
+
+        # Отвязываем впечатление
+        cursor.execute("""
+            UPDATE impressions
+            SET entry_date = NULL
+            WHERE id = ? AND chat_id = ?
+        """, (impression_id, chat_id))
+
+        conn.commit()
+        logger.debug(f"Впечатление {impression_id} отвязано от записи")
+        return True
+
+    except sqlite3.Error as e:
+        logger.error(f"Ошибка при отвязке впечатления {impression_id}: {e}")
+        conn.rollback()
+        return False
+
+
+def get_entry_impressions(
+    conn: sqlite3.Connection,
+    chat_id: int,
+    entry_date: str
+) -> List[Dict[str, Any]]:
+    """
+    Получает все впечатления, привязанные к конкретной записи дня.
+
+    Args:
+        conn: соединение с базой данных
+        chat_id: ID пользователя
+        entry_date: дата записи (YYYY-MM-DD)
+
+    Returns:
+        List[Dict]: Список впечатлений, отсортированных по времени
+    """
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, chat_id, impression_text, impression_date, impression_time,
+                   category, intensity, entry_date, created_at
+            FROM impressions
+            WHERE chat_id = ? AND entry_date = ?
+            ORDER BY impression_time ASC
+        """, (chat_id, entry_date))
+
+        impressions = []
+        for row in cursor.fetchall():
+            impressions.append({
+                'id': row[0],
+                'chat_id': row[1],
+                'text': row[2],
+                'date': row[3],
+                'time': row[4],
+                'category': row[5],
+                'intensity': row[6],
+                'entry_date': row[7],
+                'created_at': row[8]
+            })
+
+        return impressions
+
+    except sqlite3.Error as e:
+        logger.error(f"Ошибка при получении впечатлений для записи {entry_date}: {e}")
+        return []

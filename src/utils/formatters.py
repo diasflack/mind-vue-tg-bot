@@ -3,8 +3,46 @@
 """
 
 import pandas as pd
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+import sqlite3
 from src.utils.date_helpers import format_date
+
+
+def enrich_entries_with_impressions(
+    entries: List[Dict[str, Any]],
+    chat_id: int,
+    conn: Optional[sqlite3.Connection] = None
+) -> List[Dict[str, Any]]:
+    """
+    Обогащает записи привязанными впечатлениями.
+
+    Args:
+        entries: список записей
+        chat_id: ID пользователя
+        conn: соединение с БД (опционально)
+
+    Returns:
+        List[Dict]: записи с добавленным полем 'impressions'
+    """
+    if not entries or not conn:
+        return entries
+
+    try:
+        from src.data.impressions_storage import get_entry_impressions
+
+        enriched_entries = []
+        for entry in entries:
+            entry_copy = entry.copy()
+            # Получаем впечатления для этой даты
+            impressions = get_entry_impressions(conn, chat_id, entry['date'])
+            entry_copy['impressions'] = impressions
+            enriched_entries.append(entry_copy)
+
+        return enriched_entries
+
+    except Exception:
+        # В случае ошибки возвращаем исходные записи
+        return entries
 
 
 def format_entry_summary(entry: Dict[str, Any]) -> str:
@@ -138,6 +176,18 @@ def _format_single_entry(entry: Dict[str, Any]) -> str:
     result += f"😴 Сон: {entry['sleep']}/10\n"
     result += f"😰 Тревога: {entry['anxiety']}/10\n"
     result += f"😞 Депрессия: {entry['depression']}/10\n"
+
+    # Добавляем привязанные впечатления, если есть
+    if entry.get('impressions'):
+        impressions = entry['impressions']
+        result += f"\n💭 Впечатлений: {len(impressions)}\n"
+        for imp in impressions[:3]:  # Показываем максимум 3
+            category_emoji = {'positive': '😊', 'negative': '😞', 'neutral': '😐'}.get(imp.get('category'), '💭')
+            text_preview = imp['text'][:40] + '...' if len(imp['text']) > 40 else imp['text']
+            result += f"  {category_emoji} {text_preview} (ID: {imp['id']})\n"
+        if len(impressions) > 3:
+            result += f"  ... и еще {len(impressions) - 3}\n"
+
     result += "-------------------\n\n"
 
     return result

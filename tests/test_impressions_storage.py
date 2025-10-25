@@ -81,7 +81,7 @@ def test_save_impression(test_db_with_schema):
     # Сохраняем впечатление
     result = save_impression(conn, impression_data)
 
-    assert result is True, "save_impression должна вернуть True"
+    assert isinstance(result, int) and result > 0, "save_impression должна вернуть ID впечатления"
 
     # Проверяем что впечатление сохранено
     cursor = conn.cursor()
@@ -115,7 +115,7 @@ def test_save_impression_without_optional_fields(test_db_with_schema):
 
     result = save_impression(conn, impression_data)
 
-    assert result is True
+    assert isinstance(result, int) and result > 0
 
     cursor = conn.cursor()
     cursor.execute("SELECT category, intensity FROM impressions WHERE chat_id = ?", (chat_id,))
