@@ -605,3 +605,320 @@ def count_user_templates(conn: sqlite3.Connection, chat_id: int) -> int:
     """, (chat_id,))
 
     return cursor.fetchone()[0]
+
+
+# ============================================================================
+# Функции для работы с вопросами в пользовательских шаблонах (Phase 3.2)
+# ============================================================================
+
+def add_question_to_template(
+    conn: sqlite3.Connection,
+    template_id: int,
+    chat_id: int,
+    question_data: Dict[str, Any]
+) -> Optional[int]:
+    """
+    Добавляет вопрос к шаблону. Только владелец может добавить вопрос.
+
+    Args:
+        conn: Соединение с БД
+        template_id: ID шаблона
+        chat_id: ID пользователя (для проверки прав)
+        question_data: Данные вопроса с ключами:
+            - question_text: Текст вопроса (10-500 символов)
+            - question_type: Тип (text, numeric, yes_no, time, choice, scale)
+            - config: JSON конфигурация (опционально)
+            - is_required: Обязательный вопрос (по умолчанию True)
+
+    Returns:
+        int или None: ID созданного вопроса или None при ошибке
+    """
+    try:
+        # Проверяем принадлежность шаблона пользователю
+        cursor = conn.execute("""
+            SELECT created_by, is_system FROM survey_templates
+            WHERE id = ?
+        """, (template_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            logger.warning(f"Шаблон {template_id} не найден")
+            return None
+
+        created_by, is_system = row
+
+        if is_system:
+            logger.warning(f"Попытка добавить вопрос к системному шаблону {template_id}")
+            return None
+
+        if created_by != chat_id:
+            logger.warning(f"Попытка добавить вопрос к чужому шаблону {template_id} пользователем {chat_id}")
+            return None
+
+        # Проверяем лимит вопросов (максимум 30)
+        cursor = conn.execute("""
+            SELECT COUNT(*) FROM survey_questions
+            WHERE template_id = ?
+        """, (template_id,))
+
+        question_count = cursor.fetchone()[0]
+        if question_count >= 30:
+            logger.warning(f"Достигнут лимит вопросов (30) для шаблона {template_id}")
+            return None
+
+        # Получаем следующий order_index
+        cursor = conn.execute("""
+            SELECT COALESCE(MAX(order_index), 0) FROM survey_questions
+            WHERE template_id = ?
+        """, (template_id,))
+
+        next_order = cursor.fetchone()[0] + 1
+
+        # Вставляем вопрос
+        question_text = question_data['question_text']
+        question_type = question_data['question_type']
+        config = question_data.get('config')
+        is_required = question_data.get('is_required', True)
+
+        cursor = conn.execute("""
+            INSERT INTO survey_questions
+            (template_id, question_text, question_type, order_index, is_required, config)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (template_id, question_text, question_type, next_order, is_required, config))
+
+        conn.commit()
+        question_id = cursor.lastrowid
+
+        logger.info(f"Вопрос {question_id} добавлен к шаблону {template_id} пользователем {chat_id}")
+        return question_id
+
+    except Exception as e:
+        logger.error(f"Ошибка добавления вопроса к шаблону: {e}")
+        conn.rollback()
+        return None
+
+
+def update_question(
+    conn: sqlite3.Connection,
+    question_id: int,
+    template_id: int,
+    chat_id: int,
+    **updates
+) -> bool:
+    """
+    Обновляет вопрос. Только владелец шаблона может обновить вопрос.
+
+    Args:
+        conn: Соединение с БД
+        question_id: ID вопроса
+        template_id: ID шаблона (для проверки прав)
+        chat_id: ID пользователя (для проверки прав)
+        **updates: Поля для обновления (question_text, question_type, config, is_required)
+
+    Returns:
+        bool: True если успешно, False если ошибка или нет прав
+    """
+    try:
+        # Проверяем принадлежность шаблона пользователю
+        cursor = conn.execute("""
+            SELECT created_by, is_system FROM survey_templates
+            WHERE id = ?
+        """, (template_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            logger.warning(f"Шаблон {template_id} не найден")
+            return False
+
+        created_by, is_system = row
+
+        if is_system:
+            logger.warning(f"Попытка изменить вопрос системного шаблона {template_id}")
+            return False
+
+        if created_by != chat_id:
+            logger.warning(f"Попытка изменить вопрос чужого шаблона {template_id} пользователем {chat_id}")
+            return False
+
+        # Проверяем что вопрос принадлежит этому шаблону
+        cursor = conn.execute("""
+            SELECT template_id FROM survey_questions
+            WHERE id = ?
+        """, (question_id,))
+
+        row = cursor.fetchone()
+        if not row or row[0] != template_id:
+            logger.warning(f"Вопрос {question_id} не принадлежит шаблону {template_id}")
+            return False
+
+        # Формируем SQL для обновления
+        allowed_fields = {'question_text', 'question_type', 'config', 'is_required'}
+        update_fields = {k: v for k, v in updates.items() if k in allowed_fields}
+
+        if not update_fields:
+            logger.warning("Нет полей для обновления вопроса")
+            return False
+
+        set_clause = ', '.join([f"{k} = ?" for k in update_fields.keys()])
+        values = list(update_fields.values()) + [question_id]
+
+        conn.execute(f"""
+            UPDATE survey_questions
+            SET {set_clause}
+            WHERE id = ?
+        """, values)
+
+        conn.commit()
+        logger.info(f"Вопрос {question_id} обновлен пользователем {chat_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Ошибка обновления вопроса: {e}")
+        conn.rollback()
+        return False
+
+
+def delete_question(
+    conn: sqlite3.Connection,
+    question_id: int,
+    template_id: int,
+    chat_id: int
+) -> bool:
+    """
+    Удаляет вопрос из шаблона. Только владелец может удалить вопрос.
+    Пересчитывает order_index для оставшихся вопросов.
+
+    Args:
+        conn: Соединение с БД
+        question_id: ID вопроса
+        template_id: ID шаблона (для проверки прав)
+        chat_id: ID пользователя (для проверки прав)
+
+    Returns:
+        bool: True если успешно, False если ошибка или нет прав
+    """
+    try:
+        # Проверяем принадлежность шаблона пользователю
+        cursor = conn.execute("""
+            SELECT created_by, is_system FROM survey_templates
+            WHERE id = ?
+        """, (template_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            logger.warning(f"Шаблон {template_id} не найден")
+            return False
+
+        created_by, is_system = row
+
+        if is_system:
+            logger.warning(f"Попытка удалить вопрос из системного шаблона {template_id}")
+            return False
+
+        if created_by != chat_id:
+            logger.warning(f"Попытка удалить вопрос из чужого шаблона {template_id} пользователем {chat_id}")
+            return False
+
+        # Проверяем что вопрос принадлежит этому шаблону
+        cursor = conn.execute("""
+            SELECT template_id, order_index FROM survey_questions
+            WHERE id = ?
+        """, (question_id,))
+
+        row = cursor.fetchone()
+        if not row or row[0] != template_id:
+            logger.warning(f"Вопрос {question_id} не принадлежит шаблону {template_id}")
+            return False
+
+        deleted_order = row[1]
+
+        # Удаляем вопрос
+        conn.execute("DELETE FROM survey_questions WHERE id = ?", (question_id,))
+
+        # Пересчитываем order_index для оставшихся вопросов
+        conn.execute("""
+            UPDATE survey_questions
+            SET order_index = order_index - 1
+            WHERE template_id = ? AND order_index > ?
+        """, (template_id, deleted_order))
+
+        conn.commit()
+        logger.info(f"Вопрос {question_id} удален из шаблона {template_id} пользователем {chat_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Ошибка удаления вопроса: {e}")
+        conn.rollback()
+        return False
+
+
+def reorder_questions(
+    conn: sqlite3.Connection,
+    template_id: int,
+    chat_id: int,
+    question_ids_order: List[int]
+) -> bool:
+    """
+    Изменяет порядок вопросов в шаблоне.
+
+    Args:
+        conn: Соединение с БД
+        template_id: ID шаблона
+        chat_id: ID пользователя (для проверки прав)
+        question_ids_order: Список ID вопросов в новом порядке
+
+    Returns:
+        bool: True если успешно, False если ошибка или нет прав
+    """
+    try:
+        # Проверяем принадлежность шаблона пользователю
+        cursor = conn.execute("""
+            SELECT created_by, is_system FROM survey_templates
+            WHERE id = ?
+        """, (template_id,))
+
+        row = cursor.fetchone()
+        if not row:
+            logger.warning(f"Шаблон {template_id} не найден")
+            return False
+
+        created_by, is_system = row
+
+        if is_system:
+            logger.warning(f"Попытка изменить порядок вопросов системного шаблона {template_id}")
+            return False
+
+        if created_by != chat_id:
+            logger.warning(f"Попытка изменить порядок вопросов чужого шаблона {template_id} пользователем {chat_id}")
+            return False
+
+        # Получаем все вопросы шаблона
+        cursor = conn.execute("""
+            SELECT id FROM survey_questions
+            WHERE template_id = ?
+            ORDER BY order_index
+        """, (template_id,))
+
+        existing_ids = {row[0] for row in cursor.fetchall()}
+
+        # Проверяем что все вопросы из списка принадлежат шаблону
+        if set(question_ids_order) != existing_ids:
+            logger.warning(f"Список вопросов не соответствует вопросам шаблона {template_id}")
+            return False
+
+        # Обновляем order_index для каждого вопроса
+        for new_index, question_id in enumerate(question_ids_order, start=1):
+            conn.execute("""
+                UPDATE survey_questions
+                SET order_index = ?
+                WHERE id = ?
+            """, (new_index, question_id))
+
+        conn.commit()
+        logger.info(f"Порядок вопросов шаблона {template_id} изменен пользователем {chat_id}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Ошибка изменения порядка вопросов: {e}")
+        conn.rollback()
+        return False
