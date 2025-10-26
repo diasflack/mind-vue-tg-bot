@@ -310,6 +310,16 @@ async def recent_entries(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # Обогащаем записи привязанными впечатлениями
+    try:
+        from src.data.storage import _get_db_connection
+        from src.utils.formatters import enrich_entries_with_impressions
+
+        conn = _get_db_connection()
+        entries = enrich_entries_with_impressions(entries, chat_id, conn)
+    except Exception as e:
+        logger.warning(f"Не удалось обогатить записи впечатлениями: {e}")
+
     # Форматирование и отправка списка последних записей
     formatted_entries = format_entry_list(entries)
 

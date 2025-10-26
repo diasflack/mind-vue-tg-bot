@@ -11,7 +11,8 @@ from telegram.ext import Application
 from src.config import TELEGRAM_BOT_TOKEN
 from src.data.storage import initialize_storage
 from src.handlers import (
-    basic, entry, stats, notifications, sharing, visualization, import_csv, delete, analytics
+    basic, entry, stats, notifications, sharing, visualization, import_csv, delete, analytics,
+    impression_handler, impression_viewing, survey_handlers, survey_viewing, survey_create, survey_questions, survey_edit, survey_delete, impression_analytics, survey_analytics, impression_link, export_handlers, survey_notification_handlers, favorite_surveys_handlers, combined_analytics_handlers
 )
 
 # Настройка логгирования
@@ -109,6 +110,21 @@ def create_application():
     import_csv.register(application)
     delete.register(application)
     analytics.register(application)
+    export_handlers.register(application)
+    impression_handler.register(application)
+    impression_viewing.register(application)
+    impression_analytics.register(application)
+    impression_link.register(application)
+    survey_handlers.register(application)
+    survey_viewing.register(application)
+    survey_analytics.register(application)
+    survey_create.register(application)
+    survey_questions.register(application)
+    survey_edit.register(application)
+    survey_delete.register(application)
+    survey_notification_handlers.register(application)
+    favorite_surveys_handlers.register(application)
+    combined_analytics_handlers.register(application)
 
     # Настройка планировщика для уведомлений
     if application.job_queue is None:
@@ -118,6 +134,7 @@ def create_application():
         )
     else:
         notifications.setup_job_queue(application.job_queue)
+        survey_notification_handlers.setup_job_queue(application.job_queue)
 
     logger.info("Приложение успешно настроено и готово к запуску")
     return application
