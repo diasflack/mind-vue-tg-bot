@@ -202,8 +202,10 @@ class TestImpressionsByDayOfWeek:
         from src.handlers.impression_analytics import show_impression_analytics
 
         # Создаем впечатления для разных дней недели
+        # Используем относительные даты чтобы все попали в период "последние 7 дней"
         impressions_by_weekday = []
-        base_date = datetime(2025, 10, 20)  # Понедельник
+        today = datetime.now()
+        base_date = today - timedelta(days=6)  # 6 дней назад + сегодня = 7 дней
 
         for i in range(7):
             impressions_by_weekday.append({
@@ -223,9 +225,8 @@ class TestImpressionsByDayOfWeek:
 
         call_args = mock_update.message.reply_text.call_args[0][0]
 
-        # Проверяем наличие дней недели
-        # Должно быть упоминание дней (пн, вт, ср, чт, пт, сб, вс)
-        assert "пн" in call_args.lower() or "monday" in call_args.lower() or "день" in call_args.lower()
+        # Проверяем наличие секции "по дням недели"
+        assert "по дням недели" in call_args.lower() or "weekday" in call_args.lower()
 
 
 class TestImpressionsTrend:
